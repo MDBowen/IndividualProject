@@ -1,5 +1,3 @@
-from models.Autoformer import Model as Autoformer
-from torchsummary import summary
 from exp.exp_main import Exp_Main
 
 from create_parser import return_parser
@@ -13,5 +11,5 @@ if __name__=='__main__':
 
     exp = Exp(parser)
 
-    print(exp)
+    print(exp.model)
 
