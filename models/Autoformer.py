@@ -95,3 +95,8 @@ class Model(nn.Module):
             return dec_out[:, -self.pred_len:, :], attns
         else:
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+        
+
+    def fit(self, X, Y):
+
+
