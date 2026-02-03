@@ -2,38 +2,37 @@
 from utils.tools import dotdict
 from exp.exp_main import Exp_Main as Exp
 
-def get_test_config():
+def get_train_config():
     args = dotdict()
 
     args.is_training = 1
     args.model_id = 'test'
     args.model = 'Autoformer'
-    args.data = 'sp100_combined_close'
-    args.root_path = 'get_data'
+    args.data = 'sp100'
+    args.root_path = 'data'
     args.data_path = 'sp100_combined_close.csv'
     args.features = 'M'
     args.target = 'M'
-    args.frequency = 'd'
-    args.checkpoints = '/.autoformer_checkpoints/'
+    args.frequency = 'D'
+    args.freq = 'd'
+    args.checkpoints = './autoformer_checkpoints/'
 
     args.sequence_len = 96
-    args.argument = label_len = 48
+    args.label_len = 48
     args.pred_len = 24
 
-    args.enc_in = None
-    args.dec_in = None
-    args.c_out = None
+    args.enc_in = 98
+    args.dec_in =98
+    args.c_out =98
     args.d_model = 512
     args.n_heads = 8 
     args.e_layers = 2
     args.d_layers=1
-    args.d_ff = None 
+    args.d_ff = 2048 
     args.moving_avg = 50 
     args.faction = 1 
     args.distil = True
     args.dropout = 0.05  
-    args.embed = None # because unnedded for the sp100 data loader, would be 'timeF'
-
     args.activation = 'gelu'
 
     args.output_attention = True 
@@ -45,7 +44,7 @@ def get_test_config():
     args.batch_size = 32 
     args.patience = 3 
     args.learning_rate = 0.0001
-    args.des = 'test'
+    args.des = 'train'
     args.loss = 'mse'
     args.lradj = 'type1'
     args.use_amp = False 
@@ -54,6 +53,9 @@ def get_test_config():
     args.gpu = None 
     args.use_multi_gpu = False
     args.devices = None  
+
+    args.embed = 'timeF'
+    args.factor = 3
     
 
     setting = '{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(
@@ -79,7 +81,8 @@ def get_test_config():
 
 if __name__ == '__main__':
 
-    args, setting = get_test_config()
+    args, setting = get_train_config()
+
     
     exp = Exp(args)
     print(f'Started training for {args.train_epochs}')

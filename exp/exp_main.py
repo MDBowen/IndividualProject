@@ -58,10 +58,19 @@ class Exp_Main(Exp_Basic):
         dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
         # encoder - decoder
 
+        if torch.isnan(dec_inp).any():
+            print('nan in dec_inp in _predict, exp_main')
+
+        if torch.isnan(batch_y_mark).any():
+            print('nan in batch_y_mark in exp_main _predict')
+
         def _run_model():
             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
             if self.args.output_attention:
+                print('output attention')
+                print(outputs)
                 outputs = outputs[0]
+                print(outputs)
             return outputs
 
         if self.args.use_amp:
@@ -70,6 +79,10 @@ class Exp_Main(Exp_Basic):
         else:
             outputs = _run_model()
 
+        if torch.isnan(outputs).any():
+            print('nan in output in exp_main predict')
+
+        # What this does:   chooses the last pred_len values along the time dimension, but doesnt this mean if this is longer than pred len we loose close, likely more accuracte values?
         f_dim = -1 if self.args.features == 'MS' else 0
         outputs = outputs[:, -self.args.pred_len:, f_dim:]
         batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
@@ -111,7 +124,7 @@ class Exp_Main(Exp_Basic):
         time_now = time.time()
 
         train_steps = len(train_loader)
-        early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
+        early_stopping = EarlyStopping(patience=self.args.patience, verbose=False)
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
@@ -126,6 +139,13 @@ class Exp_Main(Exp_Basic):
             self.model.train()
             epoch_time = time.time()
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+
+                if torch.isnan(batch_x).any():
+                    print('nan in batch x in exp_main train')
+
+                if torch.isnan(batch_x_mark).any():
+                    print('nan in batch x mark in exp_main train')
+
                 iter_count += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
@@ -137,6 +157,7 @@ class Exp_Main(Exp_Basic):
                 outputs, batch_y = self._predict(batch_x, batch_y, batch_x_mark, batch_y_mark)
 
                 loss = criterion(outputs, batch_y)
+
                 train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -155,6 +176,7 @@ class Exp_Main(Exp_Basic):
                     loss.backward()
                     model_optim.step()
 
+
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
@@ -172,7 +194,7 @@ class Exp_Main(Exp_Basic):
         best_model_path = path + '/' + 'checkpoint.pth'
         self.model.load_state_dict(torch.load(best_model_path))
 
-        return
+        return 
 
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')

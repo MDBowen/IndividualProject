@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 from sklearn.preprocessing import StandardScaler
 from utils.timefeatures import time_features
 import warnings
+import numpy as np
 
 warnings.filterwarnings('ignore')
 
@@ -396,7 +397,7 @@ class Dataset_Sp100_Custom(Dataset):
     def __init__(self, root_path,  data_path,
                  flag='train', size=None,
                  features='M',
-                 target='OT', scale=True, timeenc=1, freq='d'):
+                 target='OT', scale=True, timeenc=1, freq='d', select_columns = None):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
@@ -417,6 +418,10 @@ class Dataset_Sp100_Custom(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+
+
+
+        self.select_columns = select_columns
 
         self.root_path = root_path
         self.data_path = data_path
@@ -448,8 +453,8 @@ class Dataset_Sp100_Custom(Dataset):
 
         border1s = [0, num_train - self.seq_len, len(df_raw) - num_test - self.seq_len]
         border2s = [num_train, num_train + num_vali, len(df_raw)]
-        border1 = border1s[self.set_type]
-        border2 = border2s[self.set_type]
+        border1 = border1s[self.set_type] # start depending on train, vali, test 
+        border2 = border2s[self.set_type] # end depending on train, vali, test
 
 
         # if self.features == 'M' or self.features == 'MS':
@@ -458,13 +463,37 @@ class Dataset_Sp100_Custom(Dataset):
         # elif self.features == 'S':
             # df_data = df_raw[[self.target]]
 
+        if self.select_columns is not None:
+            df_raw = df_raw[['date'] + self.select_columns]
+            print(f'select columns: {self.select_columns}')
+
         cols_data = df_raw.columns[1:]
         df_data = df_raw[cols_data]
 
         df_data = df_data.to_numpy()
 
         df_data = df_data[2:]
+
+
+        col_to_delete = []        
+
+        for i in range(df_data.shape[1]):
+            col = df_data[:, i]
+            if np.isnan(col).any():
+                mean_val = np.nanmean(col)
+                col[np.isnan(col)] = mean_val
+                df_data[:, i] = col
+                print(f'found nan in column {i}, which belongs to {cols_data[i]}, column deleted')
+
+                col_to_delete.append(cols_data[i])
+
+        cols_data = list(set(cols_data) - set(col_to_delete))
+
+        df_data = df_raw[cols_data].to_numpy()[2:]
+
         
+        if np.isnan(df_data).any():
+            print(f'nan in df_data: {np.isnan(df_data).any()} within read_data')
 
         if self.scale:
             train_data = df_data[border1s[0]:border2s[0]]
@@ -481,6 +510,10 @@ class Dataset_Sp100_Custom(Dataset):
 
         self.data_x = data[border1:border2]
         self.data_y = data[border1:border2]
+
+        if np.isnan(self.data_x).any() or np.isnan(self.data_y).any():
+            print(f'nan in self.data_x: {np.isnan(self.data_x).any()} or nan ins self, data_y: {np.isnan(self.data_y).any()}')
+        print(f'in __read_data__ exist nan: {np.isnan(self.data_x).any()}')
         self.data_stamp = data_stamp
 
     def __getitem__(self, index):
