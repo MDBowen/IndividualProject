@@ -67,10 +67,7 @@ class Exp_Main(Exp_Basic):
         def _run_model():
             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
             if self.args.output_attention:
-                print('output attention')
-                print(outputs)
                 outputs = outputs[0]
-                print(outputs)
             return outputs
 
         if self.args.use_amp:
@@ -160,7 +157,7 @@ class Exp_Main(Exp_Basic):
 
                 train_loss.append(loss.item())
 
-                if (i + 1) % 100 == 0:
+                if (i + 1) % 100 == 0: # if we have more than 100 batches? 
                     print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time() - time_now) / iter_count
                     left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)

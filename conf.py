@@ -40,7 +40,7 @@ def get_train_config():
     args.num_workers = 1 
     args.itr = None 
     args.train_epochs = 10
-    args.batch_size = 1 
+    args.batch_size = 32
     args.patience = 3 
     args.learning_rate = 0.0001
     args.des = 'train'

@@ -420,7 +420,6 @@ class Dataset_Sp100_Custom(Dataset):
         self.freq = freq
 
 
-
         self.select_columns = select_columns
 
         self.root_path = root_path
@@ -453,6 +452,7 @@ class Dataset_Sp100_Custom(Dataset):
 
         border1s = [0, num_train - self.seq_len, len(df_raw) - num_test - self.seq_len]
         border2s = [num_train, num_train + num_vali, len(df_raw)]
+
         border1 = border1s[self.set_type] # start depending on train, vali, test 
         border2 = border2s[self.set_type] # end depending on train, vali, test
 
@@ -483,21 +483,23 @@ class Dataset_Sp100_Custom(Dataset):
                 mean_val = np.nanmean(col)
                 col[np.isnan(col)] = mean_val
                 df_data[:, i] = col
-                print(f'found nan in column {i}, which belongs to {cols_data[i]}, column deleted')
+                # print(f'found nan in column {i}, which belongs to {cols_data[i]}, column deleted')
 
                 col_to_delete.append(cols_data[i])
 
         cols_data = list(set(cols_data) - set(col_to_delete))
 
-        df_data = df_raw[cols_data].to_numpy()[2:]
+        self.df_data = df_raw[cols_data]
+
+        df_data = self.df_data.to_numpy()[2:]
 
         
         if np.isnan(df_data).any():
             print(f'nan in df_data: {np.isnan(df_data).any()} within read_data')
-
+        train_data = df_data[border1s[0]:border2s[0]] # gets the scaler to fit on training data only
+        self.scaler.fit(train_data)
+        
         if self.scale:
-            train_data = df_data[border1s[0]:border2s[0]]
-            self.scaler.fit(train_data)
             data = self.scaler.transform(df_data)
         else:
             data = df_data.to_numpy()
@@ -515,6 +517,12 @@ class Dataset_Sp100_Custom(Dataset):
             print(f'nan in self.data_x: {np.isnan(self.data_x).any()} or nan ins self, data_y: {np.isnan(self.data_y).any()}')
         print(f'in __read_data__ exist nan: {np.isnan(self.data_x).any()}')
         self.data_stamp = data_stamp
+
+    def get_data(self):
+        return self.data_x
+    
+    def get_data_frame(self):
+        return self.df_data
 
     def __getitem__(self, index):
         s_begin = index
@@ -534,4 +542,5 @@ class Dataset_Sp100_Custom(Dataset):
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
+
 

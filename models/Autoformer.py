@@ -91,14 +91,13 @@ class Model(nn.Module):
         seasonal_part, trend_part = self.decoder(dec_out, enc_out, x_mask=dec_self_mask, cross_mask=dec_enc_mask,
                                                  trend=trend_init)
         # final
-        dec_out = trend_part + seasonal_part
+        dec_out = trend_part + seasonal_part 
+
+        print(dec_out.shape)
 
         if self.output_attention:
             return dec_out[:, -self.pred_len:, :], attns
         else:
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
         
-
-    # def fit(self, X, Y):
-
 

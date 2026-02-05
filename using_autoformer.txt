@@ -1,3 +1,0 @@
-!cd Autoformer
-!pip install -r requirements
-
