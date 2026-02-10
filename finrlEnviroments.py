@@ -2,67 +2,127 @@ import yfinance as yf
 import numpy as np
 import gymnasium as gym
 
+import os
+
+
 from sklearn.preprocessing import StandardScaler
 
 from finrl.meta.preprocessor.yahoodownloader import YahooDownloader
-from finrl.config import INDICATORS
 from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
+from finrl.config import INDICATORS
+from finrl.meta.preprocessor.preprocessors import FeatureEngineer
+from finrl import config_tickers
+
+from get_data.get_data import return_sp100_tick
+from get_data.get_data import download_finrl_data, return_sp100_tick
+from get_data.test_yahoo_downloader import TestYahooDownloader
+
 
 from models.denseModel import train_dense
 from data_provider.data_factory import data_provider
-from agents.basicStrategies import basicStrategy
 
-from conf import get_train_config
+from agents.basicStrategies import basicStrategy, Predictor_Strategy
 
-args, setting = get_train_config()
+from conf import get_train_config, get_single_asset_config
 
-def simulate_strategy(agent, data):
+
+
+
+def fetch_data(start_date, end_date, tickers, indicators):
+    '''Returns data in OHLCV form'''
+
+    downloader = TestYahooDownloader(start_date, end_date, tickers)
+    df = downloader.fetch_data()
+    # os.makedirs('data/single_yahoo_data', exist_ok = True)
+    # downloader.save_as_csv('data/single_yahoo_data/aapl.csv',)
+    
+
+    # If I want to add vix i have to make my own edits
+    fe = FeatureEngineer(
+    use_technical_indicator=True,
+    tech_indicator_list=indicators,
+    use_vix=False,
+    use_turbulence=True,
+    user_defined_feature=False
+    )
+
+    df_processed = fe.preprocess_data(df)   
+
+    return df_processed
+
+
+def simulate_strategy(agent, data, tickers, indicators):
+
+
+    stock_dimension = len(tickers)
+    state_space = 1 + 2 * stock_dimension + len(indicators) * stock_dimension
 
     env = StockTradingEnv(data, 
-                          stock_dim = 98, 
-                          hmax = 10000,
+                          reward_scaling = 1e-3,
+                          state_space = state_space,
+                          action_space = stock_dimension ,
+                          tech_indicator_list = indicators,
+                          num_stock_shares = [0] * stock_dimension,
+                          stock_dim = stock_dimension, 
+                          hmax = 100,
                           initial_amount = 10000,
-                          num_stock_shares = [], 
-                          buy_cost_pct = 1e-2,
-                          sell_cost_pct = 1e-2,
-                          turbulence_threshold = 100
-                          print_verbosity(1)
+                          buy_cost_pct = [0.001] * stock_dimension,
+                          sell_cost_pct = [0.001] * stock_dimension,
+                          turbulence_threshold = 100,
+                          print_verbosity = 1,
                           )
-
-
-    state, dict =env.reset()
-
+    
+    state, dict = env.reset()
     done = False
+   
+    print(f'Start state: {state} /n')
 
     while not done:
 
         action = agent.get_action(state)
 
-        state, reward, done, _, dict = env.step()
+        state, reward, done, _, dict = env.step(action)
+        print(f'New state:{state} with reward {reward}')
 
+        assert False,'breakpoint'
 
 if __name__ == '__main__':
+
+    indicators = [              # 8 standard indicators
+        'macd',
+        'boll_ub',
+        'boll_lb',
+        'rsi_30',
+        'cci_30',
+        'dx_30',
+        'close_30_sma',
+        'close_60_sma'
+    ]
+    start_date = "2018-01-01"
+    end_date = "2023-01-01"
+    tickers = ['aapl']
+
+    df = fetch_data(start_date, end_date, tickers, indicators)
+
+    args, setting = get_single_asset_config(root_path = 'data/single_yahoo_data', data_path = 'aapl.csv', data_name = 'aapl')
 
     train_set, training_loader = data_provider(args, flag = 'train')
     test_set, test_loader = data_provider(args, flag='test')
 
     print(f'Training model for {len(training_loader)}')
-    dense = train_dense(training_loader)
+    #  'checkpoints/denseModel/dense_model_checkpoint.pth'
+    
+    dense = train_dense(training_loader, feature_size=args.enc_in , save = True, load_path = None)
+    scaler = None
     print(f'Training finshed')
-
-    train_data = train_set.get_data()
-    df = test_set.get_data_frame()
-
-    scaler = StandardScaler()
-    scaler.fit(train_data)
 
 
     print('Data frame:')
     print(df.head(), '\n')
 
-    agent = basicStrategy(args, dense, scaler)
+    agent = Predictor_Strategy(args, dense, scaler)
 
-    simulate_strategy(agent, df)
+    simulate_strategy(agent, df, tickers, indicators)
 
 
 

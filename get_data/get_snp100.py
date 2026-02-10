@@ -172,9 +172,6 @@ def get_all_from_csv_dataframe(directory, tickers):
         try:
             df = pd.read_csv(f"{directory}/{ticker}.csv")
             stock_dict[ticker] = df
-
-            # print(f" Got {ticker} from  {directory}/{ticker}.csv" )
-
         except:
             print(f"Couldnt get ticker {ticker} from {directory}/{ticker}.csv" )
 

@@ -1,6 +1,95 @@
 
 import numpy as np
 import torch
+from collections import deque
+
+
+'''For implementing predictive models as agents for the DRL_agent class in 
+finrl.agents.stablebaselines3.models'''
+''' for DRL_prediciton method each require a .predict method that takes test_obs (a state observation) 
+and returns an action (for sure) and and maybe a state?  '''
+''' For the StockTradinEnv class in finrl.meta.env_stock_trading.env_stocktrading the state will be of the
+form tuple( [balance]  )'''
+
+
+class Buffer:
+    def __init__(self,  max_size=1000, seq_len =96, feature_size=98):
+        self.states = deque(maxlen=max_size)
+        self.seq_len = seq_len
+        self.feature_size = feature_size
+        self.max_size = max_size
+    
+    def add(self, item):
+        self.states.append(item)
+    
+    def get_all(self):
+        return list(self.states)
+    
+    def get_size(self):
+        return len(list(self.states))
+
+    def get_last(self):
+        states = np.array(list(self.states))
+        # print(f'Buffer states shape before slicing: {states.shape}')
+        prices = states[-self.seq_len:]
+        # print(f'Buffer prices shape: {prices.shape}')
+        return prices.reshape(self.seq_len, self.feature_size)
+
+class Predictor_Strategy: 
+    def __init__(self, args, predictor_model, scaler):
+        '''Super class for predictor only strategies as agents for FinRL stocktradin_env'''
+
+
+        self.scaler = scaler
+        self.model = predictor_model
+
+        self.args = args 
+        self.action_shape = args.feature_size
+
+        # Every predictior will require a buffer to get a number of states
+        seq_len, features = self.model.input_shape[0], self.model.input_shape[1]
+        self.seq_len = seq_len
+        self.features = features
+        self.buffer = Buffer(max_size= 1000, seq_len=seq_len, feature_size = features)
+
+    def state_to_input(self, state):
+        '''Turns the state to a valid input to the model'''
+
+        # valid for single asset
+        close_data = state[1]
+
+        x = self.scaler.transform(close_data)      
+        x = torch.from_numpy(x.reshape(1, x.shape[0], x.shape[1])).float()
+
+        self.buffer.add(x)
+
+        if self.buffer.get_size() >= self.seq_len:
+            input = self.buffer.get_last()
+            return input
+        else:
+            return None
+
+    def prediciton_to_action(self, prediction, strategy_func, state):
+        '''Implements strategy'''
+        return strategy_func(prediction, state)
+    
+    def get_action(self, state):
+
+        input = self.state_to_input(state)
+
+        if input == None:
+            action = np.zeros(self.features)
+
+        assert input==self.model.input_shape, f'Input shape {input} doesnt match expected shape {self.model.input_shape}'
+
+        with torch.no_grad():
+            prediction = self.model(input)[0]
+
+        action = self.prediciton_to_action(prediction, state)
+
+        return action
+
+
 
 class basicStrategy:
     def __init__(self, args, predictor_model, scaler):
@@ -35,6 +124,8 @@ class basicStrategy:
         action[price_change > 0] = 1  # buy
         action[price_change < 0] = -1  # sell
         return action
+
+    # def predict():
     
 class buyAndHoldStrategy:
     def __init__(self, args):

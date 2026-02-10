@@ -1,6 +1,22 @@
 
 
 from utils.tools import dotdict
+
+def get_single_asset_config(root_path, data_path, data_name):
+
+    args, setting = get_train_config()
+
+    args.data = 'yh_fin'
+    args.root_path = root_path
+    args.data_path = data_path
+
+    #change if we want indicators
+    args.enc_in = 1
+    args.dec_out = 1
+    args.c_out = 1
+
+    return args, setting
+
 def get_train_config():
     args = dotdict()
 
@@ -16,7 +32,7 @@ def get_train_config():
     args.freq = 'd'
     args.checkpoints = './autoformer_checkpoints/'
 
-    args.sequence_len = 96
+    args.seq_len = 96
     args.label_len = 48
     args.pred_len = 24
 
