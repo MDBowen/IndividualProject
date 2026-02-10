@@ -21,7 +21,7 @@ from get_data.test_yahoo_downloader import TestYahooDownloader
 from models.denseModel import train_dense
 from data_provider.data_factory import data_provider
 
-from agents.basicStrategies import basicStrategy, Predictor_Strategy
+from agents.basicStrategies import BasicStrategy, PredictorStrategy
 
 from conf import get_train_config, get_single_asset_config
 
@@ -35,7 +35,6 @@ def fetch_data(start_date, end_date, tickers, indicators):
     df = downloader.fetch_data()
     # os.makedirs('data/single_yahoo_data', exist_ok = True)
     # downloader.save_as_csv('data/single_yahoo_data/aapl.csv',)
-    
 
     # If I want to add vix i have to make my own edits
     fe = FeatureEngineer(
@@ -52,7 +51,6 @@ def fetch_data(start_date, end_date, tickers, indicators):
 
 
 def simulate_strategy(agent, data, tickers, indicators):
-
 
     stock_dimension = len(tickers)
     state_space = 1 + 2 * stock_dimension + len(indicators) * stock_dimension
@@ -74,17 +72,24 @@ def simulate_strategy(agent, data, tickers, indicators):
     
     state, dict = env.reset()
     done = False
+
+    states = []
+    rewards = []
+    actions = []
    
     print(f'Start state: {state} /n')
-
+    steps = 0
     while not done:
-
+        steps+=1
         action = agent.get_action(state)
-
+        actions.append(action)
         state, reward, done, _, dict = env.step(action)
-        print(f'New state:{state} with reward {reward}')
+        states.append(state)
+        rewards.append(rewards)
+        
+        print(f' At step {steps} took action {action} got {reward} ')
 
-        assert False,'breakpoint'
+    return states, actions, rewards
 
 if __name__ == '__main__':
 
@@ -106,23 +111,27 @@ if __name__ == '__main__':
 
     args, setting = get_single_asset_config(root_path = 'data/single_yahoo_data', data_path = 'aapl.csv', data_name = 'aapl')
 
+    print(args.scale)
+    args.scale = True
+
     train_set, training_loader = data_provider(args, flag = 'train')
-    test_set, test_loader = data_provider(args, flag='test')
+    # test_set, test_loader = data_provider(args, flag='test')
 
     print(f'Training model for {len(training_loader)}')
     #  'checkpoints/denseModel/dense_model_checkpoint.pth'
     
-    dense = train_dense(training_loader, feature_size=args.enc_in , save = True, load_path = None)
-    scaler = None
+    dense = train_dense(training_loader, args, load_path = None)
+
     print(f'Training finshed')
 
+    scaler = train_set.scaler
 
     print('Data frame:')
     print(df.head(), '\n')
 
-    agent = Predictor_Strategy(args, dense, scaler)
+    agent = BasicStrategy(args, dense, scaler)
 
-    simulate_strategy(agent, df, tickers, indicators)
+    states, actions, rewards = simulate_strategy(agent, df, tickers, indicators)
 
 
 

@@ -13,7 +13,7 @@ form tuple( [balance]  )'''
 
 
 class Buffer:
-    def __init__(self,  max_size=1000, seq_len =96, feature_size=98):
+    def __init__(self,  max_size=1000, seq_len=96, feature_size=98):
         self.states = deque(maxlen=max_size)
         self.seq_len = seq_len
         self.feature_size = feature_size
@@ -35,21 +35,18 @@ class Buffer:
         # print(f'Buffer prices shape: {prices.shape}')
         return prices.reshape(self.seq_len, self.feature_size)
 
-class Predictor_Strategy: 
+class PredictorStrategy: 
     def __init__(self, args, predictor_model, scaler):
         '''Super class for predictor only strategies as agents for FinRL stocktradin_env'''
-
-
         self.scaler = scaler
         self.model = predictor_model
 
-        self.args = args 
-        self.action_shape = args.feature_size
-
         # Every predictior will require a buffer to get a number of states
         seq_len, features = self.model.input_shape[0], self.model.input_shape[1]
+        self.args = args
         self.seq_len = seq_len
         self.features = features
+        print('Model shapes:', seq_len, features)
         self.buffer = Buffer(max_size= 1000, seq_len=seq_len, feature_size = features)
 
     def state_to_input(self, state):
@@ -58,38 +55,61 @@ class Predictor_Strategy:
         # valid for single asset
         close_data = state[1]
 
-        x = self.scaler.transform(close_data)      
-        x = torch.from_numpy(x.reshape(1, x.shape[0], x.shape[1])).float()
-
-        self.buffer.add(x)
+        self.buffer.add(close_data)
 
         if self.buffer.get_size() >= self.seq_len:
             input = self.buffer.get_last()
-            return input
+        
+            x = self.scaler.transform(input)      
+            x = torch.from_numpy(x.reshape(1, x.shape[0], x.shape[1])).float()
+
+            return x
         else:
             return None
 
-    def prediciton_to_action(self, prediction, strategy_func, state):
+    def prediciton_to_action(self, prediction, state):
         '''Implements strategy'''
-        return strategy_func(prediction, state)
+        return self.strategy_func(prediction, state)
     
     def get_action(self, state):
 
         input = self.state_to_input(state)
 
+        # If we cannot get a prediction, return an action that does nothing
         if input == None:
-            action = np.zeros(self.features)
-
-        assert input==self.model.input_shape, f'Input shape {input} doesnt match expected shape {self.model.input_shape}'
+            return np.zeros(self.features)
 
         with torch.no_grad():
-            prediction = self.model(input)[0]
+            prediction = self.model(input)
+            
+        prediction = prediction.reshape(self.args.pred_len, self.features)
+        prediction = self.scaler.inverse_transform(prediction)
 
         action = self.prediciton_to_action(prediction, state)
+        print('action:',action)
+        return action
+    
+    def strategy_func(self, prediciton, state):
+        assert False, 'You are using the superclass, please implement a sub class that implements self.strategy_func'
+        return None
+
+class BasicStrategy(PredictorStrategy):
+    def __init__(self, args, predictor_model, scaler):
+        super().__init__(args, predictor_model, scaler)
+
+    def strategy_func(self, prediciton, state):
+        
+        price = state[1]
+        prediciton = prediciton[0][0]
+
+        price_change = prediciton - price
+
+        action = np.zeros(self.features)
+
+        action[price_change > 0] = 1  # buy
+        action[price_change < 0] = -1  # sell
 
         return action
-
-
 
 class basicStrategy:
     def __init__(self, args, predictor_model, scaler):
@@ -193,11 +213,8 @@ class rankedStrategy:
     def get_action(self, state, unscaled_data = None):
 
         action = np.zeros(self.action_shape)  # hold
-
         prices = state[-1:, 0]
-
         x = self.scaler.transform(prices)
-
         prediciton = self.model.predict(x)
 
         t = -1

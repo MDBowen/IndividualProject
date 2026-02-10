@@ -6,14 +6,14 @@ import time
 from sklearn.preprocessing import StandardScaler
 
 class DenseModel(torch.nn.Module): 
-    def __init__(self, feature_size, pred_len, batch_size, hidden_layer_sizes=None):
+    def __init__(self, seq_len, feature_size, pred_len, batch_size, hidden_layer_sizes=None):
         super(DenseModel, self).__init__()
 
         self.pred_len = pred_len
         self.feature_size = feature_size
         self.batch_size = batch_size 
 
-        self.input_shape = (pred_len, feature_size)
+        self.input_shape = (seq_len, feature_size)
 
         if hidden_layer_sizes is None:
             hidden_layer_sizes = [512, 256, 128]
@@ -27,9 +27,7 @@ class DenseModel(torch.nn.Module):
 
         self.basepath = 'checkpoints'
         self.model_folder = 'denseModel'
-
         self.default_name = 'dense_model_checkpoint'
-
         self.default_path = self.basepath + '/' + self.model_folder + '/' + self.default_name + '.pth'
 
         self.model = torch.nn.Sequential(
@@ -77,9 +75,14 @@ class DenseModel(torch.nn.Module):
         print(f'Weights loaded from {path}')
 
 
-def train_dense(train_loader, feature_size=98, pred_len=24, batch_size=32, epochs=10, save = False, load_path = None, save_path = None):
+def train_dense(train_loader, args, load_path = None, save_path = None):
+    seq_len = args.seq_len
+    feature_size = args.enc_in
+    pred_len = args.pred_len
+    batch_size = args.batch_size
+    epochs = args.train_epochs
 
-    model = DenseModel(feature_size, pred_len, batch_size)
+    model = DenseModel(seq_len, feature_size, pred_len, batch_size)
 
     loss_fn = model.loss
     optimizer = model.optimizer
