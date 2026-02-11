@@ -12,8 +12,27 @@ def get_single_asset_config(root_path, data_path, data_name):
 
     #change if we want indicators
     args.enc_in = 1
-    args.dec_out = 1
+    args.dec_in = 1
     args.c_out = 1
+
+    
+    setting = '{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(
+                args.model_id,
+                args.model,
+                args.data,
+                args.features,
+                args.seq_len,
+                args.label_len,
+                args.pred_len,
+                args.d_model,
+                args.n_heads,
+                args.e_layers,
+                args.d_layers,
+                args.d_ff,
+                args.factor,
+                args.embed,
+                args.distil,
+                args.des, 0)
 
     return args, setting
 

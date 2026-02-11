@@ -63,11 +63,21 @@ class DenseModel(torch.nn.Module):
         if name is None:
             name = self.default_name
 
+        import os
+        os.makedirs(filepath, exist_ok=True)
+
         filepath = filepath + '/' + name + '.pth'
+
+        torch.save(self.model.state_dict(), filepath)
 
         print(f'Weights of {self.model_folder} saved to {filepath} ')
 
-    def load_params(self, path, device = 'cpu'):
+    def load_params(self, path, name = None, device = 'cpu'):
+
+        if name is None:
+            name = self.default_name
+
+        path = path + '/' + name + '.pth'
 
         state_dict = torch.load(path, map_location = device)
         self.model.load_state_dict(state_dict)
@@ -89,10 +99,13 @@ def train_dense(train_loader, args, load_path = None, save_path = None):
 
     train_steps = len(train_loader)
 
-    if load_path is not None:
-        model.load_params(path = load_path)
 
-        return model
+    if load_path is not None:
+        try:
+            model.load_params(path = load_path)
+            return model
+        except:
+            print(f'Loading model from {load_path} failed, training the model instead')
 
     print(f'Training dense for {epochs} epochs')
 
@@ -108,7 +121,6 @@ def train_dense(train_loader, args, load_path = None, save_path = None):
             batch_x = batch_x.float()
             batch_y = batch_y.float()
             output = model(batch_x)
-
 
             output = output[:, -model.pred_len:, :]
             batch_y = batch_y[:, -model.pred_len:, :]

@@ -1,7 +1,7 @@
 import yfinance as yf
 import numpy as np
 import gymnasium as gym
-
+import pandas as pd
 import os
 
 
@@ -17,16 +17,15 @@ from get_data.get_data import return_sp100_tick
 from get_data.get_data import download_finrl_data, return_sp100_tick
 from get_data.test_yahoo_downloader import TestYahooDownloader
 
-
 from models.denseModel import train_dense
-from data_provider.data_factory import data_provider
+from exp.exp_main import Exp_Main
 
-from agents.basicStrategies import BasicStrategy, PredictorStrategy
+from data_provider.data_factory import data_provider
+from utils.timefeatures import time_features
+
+from agents.basicStrategies import BasicStrategy, PredictorStrategy, BasicStrategy_auto
 
 from conf import get_train_config, get_single_asset_config
-
-
-
 
 def fetch_data(start_date, end_date, tickers, indicators):
     '''Returns data in OHLCV form'''
@@ -81,7 +80,7 @@ def simulate_strategy(agent, data, tickers, indicators):
     steps = 0
     while not done:
         steps+=1
-        action = agent.get_action(state)
+        action = agent.get_action(state, env._get_date())
         actions.append(action)
         state, reward, done, _, dict = env.step(action)
         states.append(state)
@@ -120,7 +119,18 @@ if __name__ == '__main__':
     print(f'Training model for {len(training_loader)}')
     #  'checkpoints/denseModel/dense_model_checkpoint.pth'
     
-    dense = train_dense(training_loader, args, load_path = None)
+   
+    # load_path = 'models/dense_checkpoints'
+    # dense = train_dense(training_loader, args, load_path = load_path, save_path=load_path)
+
+    model = Exp_Main(args)
+
+    load = True
+
+    if load:
+        model.load_model(setting)
+    else:
+        model.train(setting)
 
     print(f'Training finshed')
 
@@ -129,9 +139,11 @@ if __name__ == '__main__':
     print('Data frame:')
     print(df.head(), '\n')
 
-    agent = BasicStrategy(args, dense, scaler)
+    # agent = BasicStrategy(args, dense, scaler)
+    args.batch_size = 1
+    agent = BasicStrategy_auto(args, model, scaler)
 
-    states, actions, rewards = simulate_strategy(agent, df, tickers, indicators)
+    # states, actions, rewards = simulate_strategy(agent, df, tickers, indicators)
 
 
 

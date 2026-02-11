@@ -257,6 +257,16 @@ class Exp_Main(Exp_Basic):
 
         return
 
+    def load_model(self, setting):
+
+        path = os.path.join(self.args.checkpoints, setting)
+        best_model_path = path + '/' + 'checkpoint.pth'
+        logging.info(best_model_path)
+        self.model.load_state_dict(torch.load(best_model_path))
+
+
+        print('Parameters loaded from', path)
+
     def predict(self, setting, load=False):
         pred_data, pred_loader = self._get_data(flag='pred')
 

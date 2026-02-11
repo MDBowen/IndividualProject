@@ -93,8 +93,6 @@ class Model(nn.Module):
         # final
         dec_out = trend_part + seasonal_part 
 
-        print(dec_out.shape)
-
         if self.output_attention:
             return dec_out[:, -self.pred_len:, :], attns
         else:
