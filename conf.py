@@ -2,6 +2,50 @@
 
 from utils.tools import dotdict
 
+def get_config(tickers, data_name, freq = 'd', indicators = None ):
+
+    args, _ = get_train_config()
+
+    args.data_path = data_name + '.csv'
+    args.data = 'yh_fin' 
+
+    if indicators is None:
+        indicators = []
+
+    args.enc_in = len(tickers)+ len(indicators)
+    args.dec_in = len(tickers)+ len(indicators)
+    args.c_out = len(tickers) + len(indicators)
+
+    args.freq = freq
+
+    args.root_path = 'data/datasets'
+
+    args.start_training = '2015-01-01'
+    args.end_training = '2025-01-01'
+    args.end_testing = '2026-01-01'
+
+    setting = '{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(
+                args.model_id,
+                args.model,
+                args.data,
+                args.features,
+                args.seq_len,
+                args.label_len,
+                args.pred_len,
+                args.d_model,
+                args.n_heads,
+                args.e_layers,
+                args.d_layers,
+                args.d_ff,
+                args.factor,
+                args.embed,
+                args.distil,
+                args.des, 0)
+    
+    setting = f'{data_name}_{args.start_date}_{args.end_date}'
+    
+    return args, setting
+
 def get_single_asset_config(root_path, data_path, data_name):
 
     args, setting = get_train_config()
@@ -56,8 +100,8 @@ def get_train_config():
     args.pred_len = 24
 
     args.enc_in = 98
-    args.dec_in =98
-    args.c_out =98
+    args.dec_in = 98
+    args.c_out = 98
     args.d_model = 512
     args.n_heads = 8 
     args.e_layers = 2
@@ -68,6 +112,7 @@ def get_train_config():
     args.distil = True
     args.dropout = 0.05  
     args.activation = 'gelu'
+    args.scale = True
 
     args.output_attention = True 
     args.do_predict = None

@@ -4,9 +4,6 @@ import gymnasium as gym
 import pandas as pd
 import os
 
-
-from sklearn.preprocessing import StandardScaler
-
 from finrl.meta.preprocessor.yahoodownloader import YahooDownloader
 from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 from finrl.config import INDICATORS
@@ -15,7 +12,7 @@ from finrl import config_tickers
 
 from get_data.get_data import return_sp100_tick
 from get_data.get_data import download_finrl_data, return_sp100_tick
-from get_data.test_yahoo_downloader import TestYahooDownloader
+from IndividualProject.data.test_yahoo_downloader import TestYahooDownloader
 
 from models.denseModel import train_dense
 from exp.exp_main import Exp_Main
@@ -25,15 +22,17 @@ from utils.timefeatures import time_features
 
 from agents.basicStrategies import BasicStrategy, PredictorStrategy, BasicStrategy_auto
 
-from conf import get_train_config, get_single_asset_config
+from conf import get_train_config, get_single_asset_config, get_config
 
-def fetch_data(start_date, end_date, tickers, indicators):
+def fetch_data(start_date, end_date, tickers, indicators, root_path = None, data_path = None):
     '''Returns data in OHLCV form'''
 
     downloader = TestYahooDownloader(start_date, end_date, tickers)
     df = downloader.fetch_data()
-    # os.makedirs('data/single_yahoo_data', exist_ok = True)
-    # downloader.save_as_csv('data/single_yahoo_data/aapl.csv',)
+
+    if root_path is not None:
+        os.makedirs(root_path, exist_ok = True)
+        downloader.save_as_csv(os.path.join(root_path, data_path))
 
     # If I want to add vix i have to make my own edits
     fe = FeatureEngineer(
@@ -104,28 +103,27 @@ if __name__ == '__main__':
     ]
     start_date = "2018-01-01"
     end_date = "2023-01-01"
-    tickers = ['aapl']
+    tickers = return_sp100_tick()
 
-    df = fetch_data(start_date, end_date, tickers, indicators)
+    df = fetch_data(start_date, end_date, tickers, indicators, root_path = '', data_path = )
 
-    args, setting = get_single_asset_config(root_path = 'data/single_yahoo_data', data_path = 'aapl.csv', data_name = 'aapl')
+    args, setting = get_config(tickers, 'sp100', root_path=None, data_path=None, freq = 'd', indicators=None)
 
-    print(args.scale)
     args.scale = True
 
-    train_set, training_loader = data_provider(args, flag = 'train')
+    train_set, training_loader = data_provider(args, flag = 'train', df = df)
+    test_set, training_loader = data_provider(args, flag = 'train', df = df)
     # test_set, test_loader = data_provider(args, flag='test')
 
     print(f'Training model for {len(training_loader)}')
     #  'checkpoints/denseModel/dense_model_checkpoint.pth'
-    
    
-    # load_path = 'models/dense_checkpoints'
-    # dense = train_dense(training_loader, args, load_path = load_path, save_path=load_path)
+    load_path = 'models/dense_checkpoints'
+    dense = train_dense(training_loader, args, load_path = load_path, save_path=load_path)
 
     model = Exp_Main(args)
 
-    load = True
+    load = False
 
     if load:
         model.load_model(setting)

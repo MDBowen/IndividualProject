@@ -5,25 +5,26 @@ import time
 
 from sklearn.preprocessing import StandardScaler
 
+from data_provider.data_factory import data_provider
+
 class DenseModel(torch.nn.Module): 
-    def __init__(self, seq_len, feature_size, pred_len, batch_size, hidden_layer_sizes=None):
+    def __init__(self, args, hidden_layer_sizes = None):
         super(DenseModel, self).__init__()
 
-        self.pred_len = pred_len
-        self.feature_size = feature_size
-        self.batch_size = batch_size 
+        self.pred_len = args.pred_len
+        self.feature_size = args.enc_in
+        self.batch_size = args.batch 
+        self.seq_len = args.seq_len
 
-        self.input_shape = (seq_len, feature_size)
+        self.input_shape = (self.seq_len, self.feature_size)
 
         if hidden_layer_sizes is None:
             hidden_layer_sizes = [512, 256, 128]
 
         l = hidden_layer_sizes
 
-        seq_len = 96
-
-        input_size = feature_size * seq_len
-        output_size = feature_size * pred_len
+        input_size = self.feature_size * self.seq_len
+        output_size = self.feature_size * self.pred_len
 
         self.basepath = 'checkpoints'
         self.model_folder = 'denseModel'
@@ -85,14 +86,20 @@ class DenseModel(torch.nn.Module):
         print(f'Weights loaded from {path}')
 
 
-def train_dense(train_loader, args, load_path = None, save_path = None):
+def train_dense(args, load_path = None, save_path = None):
+
+    train_set, train_loader = data_provider(args, flag = 'train')
+    print('Training Tail: ')
+    df, df_raw = train_set.get_data_frame()
+    print(df_raw.tail(10))
     seq_len = args.seq_len
     feature_size = args.enc_in
     pred_len = args.pred_len
     batch_size = args.batch_size
     epochs = args.train_epochs
 
-    model = DenseModel(seq_len, feature_size, pred_len, batch_size)
+    model = DenseModel(args)
+    model.scaler = train_set.scaler
 
     loss_fn = model.loss
     optimizer = model.optimizer

@@ -13,6 +13,14 @@ and returns an action (for sure) and and maybe a state?  '''
 ''' For the StockTradinEnv class in finrl.meta.env_stock_trading.env_stocktrading the state will be of the
 form tuple( [balance]  )'''
 
+
+class Buy_And_Hold:
+    def __init__(self, args):
+        self.feature_size = args.enc_in 
+
+    def get_action(self, states, date):
+        return np.ones(self.feature_size)
+
 class Autoformer_Buffer:
     def __init__(self,  max_size, args):
         self.prices = deque(maxlen=max_size)
@@ -24,9 +32,7 @@ class Autoformer_Buffer:
         self.label_len = args.label_len
         self.freq = args.freq
         
-
     def add(self, x, date):
-
 
         self.prices.append(x)
         self.dates.append(date)
@@ -135,7 +141,7 @@ class PredictorStrategy:
         '''Implements strategy'''
         return self.strategy_func(prediction, state)
     
-    def get_action(self, state):
+    def get_action(self, state, date):
 
         input = self.state_to_input(state)
 
@@ -200,10 +206,9 @@ class PredictorStrategyAutoformer:
         if x is None:
             return np.zeros(self.feature_len)
         
-        with torch.no_grad():
-        
+        with torch.no_grad():       
             prediction, _ = self.model._predict(x, y, x_mark, y_mark)
-        
+
         prediction = self.scaler.inverse_transform(prediction.reshape(self.pred_len, self.feature_len))
 
         prediction = prediction[0]
@@ -211,7 +216,7 @@ class PredictorStrategyAutoformer:
         action = self.prediciton_to_action(prediction, state)
 
         return action
-    
+
     def strategy_func(self, prediciton, state):
         assert False, 'You are using the superclass, please implement a sub class that implements self.strategy_func'
         return None

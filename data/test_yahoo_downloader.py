@@ -99,7 +99,9 @@ class TestYahooDownloader:
         print("Shape of DataFrame: ", data_df.shape)
         # print("Display DataFrame: ", data_df.head())
 
-        data_df = data_df.sort_values(by=["date", "tic"]).reset_index(drop=True)
+        data_df = data_df.sort_values(by=["date"]).reset_index(drop=True) 
+
+        # ENV uses day to find days, so all indecies of the same day need same index
 
         self.data_df = data_df
 
