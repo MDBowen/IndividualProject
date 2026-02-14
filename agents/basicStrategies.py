@@ -115,7 +115,7 @@ class PredictorStrategy:
         seq_len, features = self.model.input_shape[0], self.model.input_shape[1]
         self.args = args
         self.seq_len = seq_len
-        self.features = features
+        self.features = args.enc_in
         print('Model shapes:', seq_len, features)
 
         self.buffer = buffer
@@ -218,7 +218,7 @@ class PredictorStrategyAutoformer:
         x, y, x_mark, y_mark = self.state_to_input(state, date)
 
         if x is None:
-            return np.zeros(self.feature_len), 0
+            return np.zeros(self.feature_len), np.zeros(self.feature_len)
         
         self.model.model.eval()
         
@@ -234,6 +234,8 @@ class PredictorStrategyAutoformer:
         balance = state[0]
 
         action = self.prediciton_to_action(prediction, price, holdings, balance)
+
+        assert action.shape == prediction.shape, 'Action and prediction not the same shape'
 
         return np.array(action.clip(min=-1, max=1).astype(np.float32), dtype=np.float32), prediction
 

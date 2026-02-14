@@ -19,7 +19,7 @@ class DenseModel(torch.nn.Module):
         self.input_shape = (self.seq_len, self.feature_size)
 
         if hidden_layer_sizes is None:
-            hidden_layer_sizes = [512, 256, 128]
+            hidden_layer_sizes = [1024, 512, 256]
 
         l = hidden_layer_sizes
 

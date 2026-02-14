@@ -41,7 +41,7 @@ def get_data(args, tickers, indicators = None):
     print('Indicators:',indicators)
 
     for tics, arg in args.items():
-        print(f'{tics} start:{arg.start_training} end:{arg.end_training} then testing end:{arg.end_testing}')
+        print(f'{tics} of length {len(tickers[tics])} start:{arg.start_training} end:{arg.end_training} then testing end:{arg.end_testing}')
 
         downloader = TestYahooDownloader(arg.start_training, arg.end_testing, tickers[tics])
         df = downloader.fetch_data()
@@ -59,6 +59,7 @@ def get_data(args, tickers, indicators = None):
 
         train_data = data_split(df, arg.start_training, arg.end_training)
         df = data_split(df, arg.end_training, arg.end_testing)
+
         # Save the training data as csv for the training loops to access
         downloader.save_as_csv(os.path.join(arg.root_path, arg.data_path), data = train_data)
 
@@ -67,8 +68,13 @@ def get_data(args, tickers, indicators = None):
 
         # Add to the dict for testing in env
         test_sets[tics] = df
+        tickers[tics] = df.tic.unique()
 
-    return test_sets
+        arg.enc_in = len(tickers[tics])
+        arg.dec_in = len(tickers[tics])
+        arg.c_out = len(tickers[tics])
+
+    return test_sets, args, tickers
 
 
 def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_name = 'n/a'):
@@ -100,31 +106,29 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
     state, dict = env.reset()
     done = False
 
-
     states = [state]
     rewards = []
     actions = []
     predictions = []
     actuals = []
 
-    data = {'states':[states], 'rewards':rewards, 'actions':actions, 'predicitons':predictions, 'actuals':actuals }
+    data = {'states':states, 'rewards':rewards, 'actions':actions, 'predictions':predictions, 'actuals':actuals }
 
-
-    print(f'Start state: {state} on date {env._get_date()} \n')
+    print(f'Start on date {env._get_date()} \n')
     steps = 0
     while not done:
+
         steps+=1
         action, prediction = agent.get_action(state, env._get_date())
         predictions.append(prediction)
         actions.append(action)
 
-        # assert  env.action_space.contains(action), f'Action of shape {action.shape} and {action} \n invalid as space{env.action_space} sample: {env.action_space.sample()}'
-
-        # print(action.shape)
         state, reward, done, _, dict = env.step(action)
         actuals.append(state[1:args.enc_in + 1])
         states.append(state)
         rewards.append(rewards)
+
+        
         
     return data
 
@@ -149,12 +153,12 @@ if __name__ == '__main__':
     sp100_tic = all_tickers['sp100']
     nasdaq100_tic = all_tickers['nasdaq100']
 
-    all_tickers = { 'csi100':csi100_tic }
-    all_tickers = {'amg':['AAPL','MSFT','GOOGL']}
+    # all_tickers = { 'sp100':sp100_tic }
+    # all_tickers = {'amg':['AAPL','MSFT','GOOGL']}
 
     all_args, all_settings = create_args(all_tickers, '')
 
-    test_sets = get_data(all_args, all_tickers, indicators = indicators)
+    test_sets, all_args, all_tickers = get_data(all_args, all_tickers, indicators = indicators)
 
     n_trials = 1
 
@@ -168,36 +172,34 @@ if __name__ == '__main__':
         
         for tic in all_tickers.keys():
 
-            results[tic] = {'MLP Prediction':{}, 'Autoformer Prediction':{}, 'Buy And Hold': {}}        
+            results[tic] = {}        
 
             print(f'Now running the {tic} test and train scheme')
             args = all_args[tic]
             tickers = all_tickers[tic]
 
+            buy_and_hold = Buy_And_Hold(args, hmax = 100)
+            df = test_sets[tic]
+            dense = train_dense(args)
+
+            results[tic]['Buy And Hold'] = run_strategy(df, 
+                                                        buy_and_hold, 
+                                                        tickers, 
+                                                        indicators=indicators, 
+                                                        name= 'buy and hold', 
+                                                        dataset_name=tic)
+            
             print('Training Dense')
 
             dense = train_dense(args)
-
-            buy_and_hold = Buy_And_Hold(args, hmax = 100)
-            df = test_sets[tic]
-
-            results[tic]['Buy And Hold'] = run_strategy(df, 
-                                                                                                        buy_and_hold, 
-                                                                                                        tickers, 
-                                                                                                        indicators=indicators, 
-                                                                                                        name= 'buy and hold', 
-                                                                                                        dataset_name=tic)
-            
             dense_strat = BasicStrategy_auto(args, dense, dense.scaler, hmax = 100)
 
-            dense_results = results[tic]['MLP Prediction'] 
-
-            data = run_strategy(df,
-                                                                                                                                                    dense_strat, 
-                                                                                                                                                    tickers, 
-                                                                                                                                                    indicators=indicators, 
-                                                                                                                                                    name = 'dense prediction', 
-                                                                                                                                                    dataset_name=tic)
+            results[tic]['MLP Prediction'] = run_strategy(df,
+                                                        dense_strat, 
+                                                        tickers, 
+                                                        indicators=indicators, 
+                                                        name = 'dense prediction', 
+                                                        dataset_name=tic)
 
             print('Training Autoformer')
 
@@ -208,11 +210,14 @@ if __name__ == '__main__':
 
             auto_strat = BasicStrategy_auto(args, autoformer, autoformer.scaler, hmax = 100)
 
-            auto_results = results[tic]['Autoformer Prediction'] 
+            results[tic]['Autoformer Prediction'] = run_strategy(df, 
+                                                                 auto_strat, 
+                                                                 tickers, 
+                                                                 indicators=indicators, 
+                                                                 name = 'autoformer prediction', 
+                                                                 dataset_name=tic)
 
-            data  = run_strategy(df, auto_strat, tickers, indicators=indicators, name = 'autoformer prediction', dataset_name=tic)
-
-    plot_results(results = results, features=3)
+    plot_results(trials,all_tickers)
 
     print(list(trials.keys()))
     print(list(trials[1].keys()))

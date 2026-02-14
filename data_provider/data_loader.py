@@ -455,6 +455,7 @@ class Dataset_Yahoo_Downloader(Dataset):
         border1 = border1s[self.set_type] # start depending on train, vali, test 
         border2 = border2s[self.set_type] # end depending on train, vali, test
         self.df_raw = df_raw
+
         selected_columns = ['close'] # Needs changing when we want indicator inputs
 
         df_data = df_raw[selected_columns].values

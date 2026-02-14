@@ -49,6 +49,7 @@ class TestYahooDownloader:
         # Download and save the data in a pandas DataFrame:
         data_df = pd.DataFrame()
         num_failures = 0
+        failures = []
         for tic in self.ticker_list:
             temp_df = yf.download(
                 tic,

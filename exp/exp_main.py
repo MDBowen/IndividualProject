@@ -200,9 +200,8 @@ class Exp_Main(Exp_Basic):
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
-
         if self.args.save_params:
-            os.path.makedirs(path)
+            os.makedirs(path)
             self.model.load_state_dict(torch.load(path + '/checkpoint.pth' ))
 
         self.model.eval()
