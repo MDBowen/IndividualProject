@@ -15,11 +15,18 @@ form tuple( [balance]  )'''
 
 
 class Buy_And_Hold:
-    def __init__(self, args):
+    def __init__(self, args, hmax):
         self.feature_size = args.enc_in 
-
-    def get_action(self, states, date):
-        return np.ones(self.feature_size)
+        self.index = 0
+        self.hmax = hmax
+    def get_action(self, state, date):
+        prices = state[1:self.feature_size+1]
+        balance = state[0]
+        self.index += 1
+        if self.index == 1:
+            return np.ones(self.feature_size, dtype = np.float32) * max(min((balance/(np.sum(prices)*self.hmax)), 1), 0), None
+        else:
+            return np.zeros(self.feature_size, dtype = np.float32), None
 
 class Autoformer_Buffer:
     def __init__(self,  max_size, args):
@@ -64,17 +71,15 @@ class Autoformer_Buffer:
         x_mark = torch.Tensor(x_mark)
         y_mark = torch.Tensor(y_mark)
 
-        print(y_label.shape)
-
         dec_inp = torch.zeros((self.pred_len, self.feature_size)).float()
         dec_inp = torch.cat([y_label, dec_inp], dim = 0).float().to(device)
 
-        x = x.reshape(1, self.seq_len, self.feature_size)
-        dec_inp = dec_inp.reshape(1, self.label_len + self.pred_len, self.feature_size)
+        x = x.reshape(self.seq_len, self.feature_size)
+        dec_inp = dec_inp.reshape(self.label_len + self.pred_len, self.feature_size)
         x_mark = x_mark.reshape(1, self.seq_len, x_mark.shape[-1])
         y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1])
 
-        return x, dec_inp, x_mark, y_mark
+        return x, x_mark, y_mark
 
 
 class Buffer:
@@ -101,7 +106,7 @@ class Buffer:
         return prices.reshape(self.seq_len, self.feature_size)
 
 class PredictorStrategy: 
-    def __init__(self, args, predictor_model, scaler, buffer = None):
+    def __init__(self, args, predictor_model, scaler, hmax, buffer = None):
         '''Super class for predictor only strategies as agents for FinRL stocktradin_env'''
         self.scaler = scaler
         self.model = predictor_model
@@ -123,7 +128,10 @@ class PredictorStrategy:
         '''Turns the state to a valid input to the model'''
 
         # valid for single asset
-        close_data = state[1]
+        close_data = state[1:self.features + 1]
+        holdings = state[self.features+1, self.features*2 +1]
+        balance = state[0]
+
 
         self.buffer.add(close_data)
 
@@ -137,9 +145,9 @@ class PredictorStrategy:
         else:
             return None
 
-    def prediciton_to_action(self, prediction, state):
+    def prediciton_to_action(self, prediction, price):
         '''Implements strategy'''
-        return self.strategy_func(prediction, state)
+        return self.strategy_func(prediction, price)
     
     def get_action(self, state, date):
 
@@ -148,15 +156,16 @@ class PredictorStrategy:
         # If we cannot get a prediction, return an action that does nothing
         if input == None:
             return np.zeros(self.features)
+        self.model.model.eval()
 
         with torch.no_grad():
             prediction = self.model(input)
             
         prediction = prediction.reshape(self.args.pred_len, self.features)
         prediction = self.scaler.inverse_transform(prediction)
+        price = state[1:self.features + 1]
+        action = self.prediciton_to_action(prediction, price)
 
-        action = self.prediciton_to_action(prediction, state)
-        print('action:',action)
         return action
     
     def strategy_func(self, prediciton, state):
@@ -164,11 +173,11 @@ class PredictorStrategy:
         return None
 
 class PredictorStrategyAutoformer:
-    def __init__(self, args, predictor_model, scaler):
+    def __init__(self, args, predictor_model, scaler, hmax):
 
         self.scaler = scaler
         self.model = predictor_model
-
+        self.hmax = hmax
         self.seq_len = args.seq_len
         self.feature_len = args.enc_in
         self.label_len = args.label_len
@@ -179,63 +188,75 @@ class PredictorStrategyAutoformer:
 
     def state_to_input(self, state, date):
 
-        close_data = state[1].reshape(1, self.feature_len)
-        close_data = self.scaler.transform(close_data)
+        close_data = np.array(state[1:self.feature_len+1]).reshape(self.feature_len)
 
         self.buffer.add(close_data.reshape(self.feature_len), date)
 
         if self.buffer.get_size() >= self.seq_len:
-            x, y, x_mark, y_mark = self.buffer.get_last()
+            x, x_mark, y_mark = self.buffer.get_last()
 
-            x = x.float()
-            y = y.float()
             x_mark = x_mark.float()
             y_mark = y_mark.float()
 
-            return x, y, x_mark, y_mark
+            x = torch.tensor(self.scaler.transform(x).reshape(1, self.seq_len, self.feature_len)).float()
+
+            y_label = x[:, -self.label_len:, :]
+
+            dec_inp = torch.zeros((1, self.pred_len, self.feature_len))
+            dec_inp = torch.cat([y_label, dec_inp], dim = 1).float()
+
+            return x, dec_inp, x_mark, y_mark
         else:
             return None, None, None, None
 
-    def prediciton_to_action(self, prediction, state):
+    def prediciton_to_action(self, prediction, price, holdings, balance):
         '''Implements strategy'''
-        return self.strategy_func(prediction, state)
+        assert prediction.shape == price.shape, f'Price {price.shape} and price prediction {prediction.shape} need to be same shape'
+        return self.strategy_func(prediction, price, holdings, balance)
     
     def get_action(self, state, date):
         x, y, x_mark, y_mark = self.state_to_input(state, date)
 
         if x is None:
-            return np.zeros(self.feature_len)
+            return np.zeros(self.feature_len), 0
         
-        with torch.no_grad():       
+        self.model.model.eval()
+        
+        with torch.no_grad():
+
             prediction, _ = self.model._predict(x, y, x_mark, y_mark)
 
         prediction = self.scaler.inverse_transform(prediction.reshape(self.pred_len, self.feature_len))
-
         prediction = prediction[0]
+        price = np.array(state[1:self.feature_len+1]).reshape(self.feature_len)
 
-        action = self.prediciton_to_action(prediction, state)
+        holdings = state[self.feature_len+1:self.feature_len*2+1]
+        balance = state[0]
 
-        return action
+        action = self.prediciton_to_action(prediction, price, holdings, balance)
 
-    def strategy_func(self, prediciton, state):
+        return np.array(action.clip(min=-1, max=1).astype(np.float32), dtype=np.float32), prediction
+
+    def strategy_func(self, prediciton, prices):
         assert False, 'You are using the superclass, please implement a sub class that implements self.strategy_func'
         return None
     
 
 class BasicStrategy_auto(PredictorStrategyAutoformer):
-    def __init__(self, args, predictor_model, scaler):
-        super().__init__(args, predictor_model, scaler)
+    def __init__(self, args, predictor_model, scaler, hmax):
+        super().__init__(args, predictor_model, scaler, hmax)
 
-    def strategy_func(self, prediciton, state):
-
-        price = state[1]
+    def strategy_func(self, prediciton, price, holdings, balance):
 
         price_change = prediciton - price
 
         action = np.zeros(self.feature_len)
 
-        action[price_change > 0] = 1  # buy
-        action[price_change < 0] = -1  # sell
+        action[price_change > 0] = 1.0 # buy
+          # sell
+        action = action*np.dot(action, price)*self.hmax/balance
+
+        action[price_change < 0] = -1.0
 
         return action
 
@@ -254,157 +275,5 @@ class BasicStrategy(PredictorStrategy):
 
         action[price_change > 0] = 1  # buy
         action[price_change < 0] = -1  # sell
-
-        return action
-
-class basicStrategy:
-    def __init__(self, args, predictor_model, scaler):
-        self.args = args
-        self.scale = args.scale
-
-        self.model = predictor_model
-        self.scaler = predictor_model.scaler
-
-        self.action_shape = args.feature_size
-
-    def get_action(self, input, state):
-
-        # is the state scaled?
-
-        x = self.scaler.transform(input)
-        x = torch.from_numpy(x.reshape(1, x.shape[0], x.shape[1])).float()
-        print(f'x: {x.shape}')
-
-        with torch.no_grad():
-            prediciton = self.model(x)
-        prediciton = prediciton.numpy()[0]
-
-        prediciton = self.scaler.inverse_transform(prediciton)[0]
-
-        assert prediciton.shape == state[:-1, 0].shape
-
-        price_change = prediciton - state[:-1, 0]
-
-        action = np.zeros(self.action_shape)
-
-        action[price_change > 0] = 1  # buy
-        action[price_change < 0] = -1  # sell
-        return action
-
-    # def predict():
-    
-class buyAndHoldStrategy:
-    def __init__(self, args):
-        self.args = args
-        self.scale = args.scale
-
-        self.action_shape = args.features
-
-    def get_action(self, state):
-
-        action = np.ones(self.action_shape)  # buy and hold
-
-        return action
-    
-class calculatedStrategy:
-    def __init__(self, args, predictor_model):
-        self.args = args
-        self.scaler = predictor_model.scaler
-
-        self.model = predictor_model
-        self.action_shape = args.features
-
-    def get_action(self, state):
-
-        action = np.zeros(self.action_shape)  # hold
-
-        return action
-    
-class naiveProfitMaximizingStrategy:
-    def __init__(self, args, predictor_model):
-        self.args = args
-        self.scaler = predictor_model.scaler
-
-        self.model = predictor_model
-        self.action_shape = args.features
-
-    def get_action(self, state):
-
-        action = np.ones(self.action_shape)*-1  # hold
-
-        prediciton = self.model.predict(state)
-
-        if self.scale:
-            # inverse scale the prediction
-            prediciton = self.scaler.inverse_transform(prediciton)
-
-        price_change = prediciton - state[-1:, 0]
-
-        highest = np.argmax(price_change)
-
-        action[highest] = 1  # buy the asset with the highest predicted price increase with all available funds
-
-        return action
-    
-
-class rankedStrategy:
-    def __init__(self, args, predictor_model, top_k=3):
-        self.args = args
-        self.scaler = predictor_model.scaler
-
-        self.model = predictor_model
-        self.action_shape = args.features
-        self.top_k = top_k
-
-    def get_action(self, state, unscaled_data = None):
-
-        action = np.zeros(self.action_shape)  # hold
-        prices = state[-1:, 0]
-        x = self.scaler.transform(prices)
-        prediciton = self.model.predict(x)
-
-        t = -1
-
-        prediciton = self.scaler.inverse_transform(prediciton)
-
-        price_change = prediciton - state[-1:, 0]
-
-        ranked_indices = np.argsort(price_change)[-self.top_k:]
-
-        action[ranked_indices] = 1  # buy the top_k assets with the highest predicted price increase
-        action[price_change < t] = -1  # sell assets with predicted price decrease
-
-        return action 
-    
-class adjustedRankedStrategy:
-    def __init__(self, args, predictor_model, top_k=3):
-        self.args = args
-        self.scaler = predictor_model.scaler
-
-        self.model = predictor_model
-        self.action_shape = args.features
-        self.top_k = top_k
-
-    def get_action(self, state):
-
-        action = np.zeros(self.action_shape)  # hold
-
-        prediciton = self.model.predict(state)
-
-        if self.scale:
-            # inverse scale the prediction
-            prediciton = self.scaler.inverse_transform(prediciton)
-            state = self.scaler.inverse_transform(state)
-
-        price_change = prediciton - state[-1:, 0]
-
-        ranked_indices = np.argsort(price_change)[-self.top_k:]
-
-        action[ranked_indices] = 1  # buy the top_k assets with the highest predicted price increase with all available funds
-        action[price_change < 0] = -1  # sell assets with predicted price decrease
-
-        # adjust actions based on confidence (magnitude of predicted price change)
-        confidence_threshold = np.percentile(np.abs(price_change), 75)  # only act on predictions in the top 25% of confidence
-        action[np.abs(price_change) < confidence_threshold] = 0  # hold if confidence is low
 
         return action

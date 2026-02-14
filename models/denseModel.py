@@ -56,6 +56,13 @@ class DenseModel(torch.nn.Module):
             return y.reshape((1, self.pred_len, self.feature_size))
 
         return y.reshape((x.shape[0], self.pred_len, self.feature_size))
+    
+    def _predict(self, x, y, x_m, y_m):
+        self.model.eval()
+        with torch.no_grad():
+            pred = self.forward(x)
+
+        return pred, None
 
     def save_params(self, name= None, filepath = None):
         if filepath is None:
@@ -89,9 +96,9 @@ class DenseModel(torch.nn.Module):
 def train_dense(args, load_path = None, save_path = None):
 
     train_set, train_loader = data_provider(args, flag = 'train')
-    print('Training Tail: ')
     df, df_raw = train_set.get_data_frame()
-    print(df_raw.tail(10))
+    print(f'Training Dense from {df_raw['date'].min()} to {df_raw['date'].max()} ')
+
     seq_len = args.seq_len
     feature_size = args.enc_in
     pred_len = args.pred_len
@@ -147,6 +154,9 @@ def train_dense(args, load_path = None, save_path = None):
 
     if save_path is not None:
         model.save_params(filepath = save_path)
+
+
+    model.model.eval()
 
     return model
 

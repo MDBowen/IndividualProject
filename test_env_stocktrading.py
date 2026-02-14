@@ -412,8 +412,6 @@ class StockTradingEnv(gym.Env):
 
     def _initiate_state(self):
 
-        print('Day in env: ',self.data)
-
         if self.initial:
             # For Initial State
             if len(self.df.tic.unique()) > 1:

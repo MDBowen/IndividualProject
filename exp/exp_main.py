@@ -117,8 +117,18 @@ class Exp_Main(Exp_Basic):
         self.scaler = train_data.scaler
 
         path = os.path.join(self.args.checkpoints, setting)
+
         if not os.path.exists(path):
             os.makedirs(path)
+
+        if self.args.load_params:
+            try:
+                self.model.load_state_dict(torch.load(path + '/' + 'checkpoint.pth'))
+                print('Model succefully loaded from path', path)
+                return
+            except:
+                print('Model couldnt be loaded, training instead')
+
 
         time_now = time.time()
 
@@ -190,8 +200,12 @@ class Exp_Main(Exp_Basic):
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
-        best_model_path = path + '/' + 'checkpoint.pth'
-        self.model.load_state_dict(torch.load(best_model_path))
+
+        if self.args.save_params:
+            os.path.makedirs(path)
+            self.model.load_state_dict(torch.load(path + '/checkpoint.pth' ))
+
+        self.model.eval()
 
         return 
 

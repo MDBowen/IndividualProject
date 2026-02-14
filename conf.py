@@ -12,13 +12,17 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
     if indicators is None:
         indicators = []
 
-    args.enc_in = len(tickers)+ len(indicators)
-    args.dec_in = len(tickers)+ len(indicators)
-    args.c_out = len(tickers) + len(indicators)
+    args.enc_in = len(tickers)
+    args.dec_in = len(tickers)
+    args.c_out = len(tickers)
+    args.train_epochs = 1
 
     args.freq = freq
 
     args.root_path = 'data/datasets'
+
+    args.load_params = False
+    args.save_params = False
 
     args.start_training = '2015-01-01'
     args.end_training = '2025-01-01'
@@ -42,7 +46,7 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
                 args.distil,
                 args.des, 0)
     
-    setting = f'{data_name}_{args.start_date}_{args.end_date}'
+    setting = f'{data_name}_{args.start_training}_{args.end_training}_{args.end_testing}_ft:{args.enc_in}_te:{args.train_epochs}'
     
     return args, setting
 

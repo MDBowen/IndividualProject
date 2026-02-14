@@ -101,7 +101,7 @@ class TestYahooDownloader:
 
         data_df = data_df.sort_values(by=["date"]).reset_index(drop=True) 
 
-        # ENV uses day to find days, so all indecies of the same day need same index
+        # ENV uses day to find days, so all indecies of the same day need same
 
         self.data_df = data_df
 
