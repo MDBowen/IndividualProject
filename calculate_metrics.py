@@ -10,7 +10,7 @@ from matplotlib.patches import Rectangle
 class MetricsCalculator:
     """Calculate performance metrics for trading agents across trials."""
     
-    def __init__(self, initial_amount: float = 100_000, risk_free_rate: float = 0.02):
+    def __init__(self, initial_amount: float, risk_free_rate: float = 0.02):
         """
         Args:
             initial_amount: Initial portfolio amount
@@ -19,22 +19,22 @@ class MetricsCalculator:
         self.initial_amount = initial_amount
         self.risk_free_rate = risk_free_rate
     
-    def calculate_profit(self, rewards: list) -> float:
+    def calculate_profit(self, start_worth, end_worth) -> float:
         """Calculate total profit from rewards."""
-        if not rewards or len(rewards) == 0:
-            return 0.0
-        
+
         # Handle case where rewards might be appended incorrectly
-        total_reward = sum([r for r in rewards if isinstance(r, (int, float))])
-        return total_reward
+        # total_reward = sum([r for r in rewards if isinstance(r, (int, float))])
+
+        return end_worth - start_worth
     
-    def calculate_cumulative_return(self, rewards: list) -> float:
+    def calculate_cumulative_return(self, start_worth, end_worth) -> float:
         """Calculate cumulative return percentage."""
-        if not rewards or len(rewards) == 0:
-            return 0.0
         
-        total_reward = sum([r for r in rewards if isinstance(r, (int, float))])
-        return (total_reward / self.initial_amount) * 100
+        total_reward = self.calculate_profit(start_worth, end_worth)
+        ccr = (total_reward / start_worth) * 100
+        print(f'Cumulative return: {ccr:.3f}%')
+
+        return ccr
     
     def calculate_sharpe_ratio(self, rewards: list, periods_per_year: int = 252) -> float:
         """
@@ -44,29 +44,24 @@ class MetricsCalculator:
             rewards: List of rewards at each step
             periods_per_year: Number of trading periods per year (default 252 for daily)
         """
-        if not rewards or len(rewards) < 2:
-            return 0.0
         
         # Convert rewards to returns
-        rewards_array = np.array([r for r in rewards if isinstance(r, (int, float))])
+        # rewards_array = np.array([r for r in rewards if isinstance(r, (int, float))])
+
+        rewards_array = np.array(rewards)
         
-        if len(rewards_array) < 2:
-            return 0.0
         
         # Calculate daily returns
         mean_return = np.mean(rewards_array)
         std_return = np.std(rewards_array)
         
-        if std_return == 0:
-            return 0.0
-        
         # Annualize
         daily_sharpe = mean_return / std_return if std_return > 0 else 0
         annual_sharpe = daily_sharpe * np.sqrt(periods_per_year)
-        
+        print('Sharpe ratio:', annual_sharpe)
         return annual_sharpe
     
-    def calculate_prediction_accuracy(self, predictions: list, actuals: list) -> float:
+    def calculate_prediction_accuracy(self, predictions: np.array, actuals: np.array) -> float:
         """
         Calculate prediction accuracy - directional accuracy (up/down).
         
@@ -74,12 +69,31 @@ class MetricsCalculator:
             predictions: List of predicted prices
             actuals: List of actual prices
         """
-        if not predictions or not actuals or len(predictions) != len(actuals):
-            return 0.0
+        
+        assert predictions.shape == actuals.shape, f'Shapes of predictions and actuals must match for accuracy calculation. Got {predictions.shape} and {actuals.shape}.'
         
         correct = 0
         total = 0
+
+        # changes: sign prediction - actual[i] == sign actual[i+1] - actual[i]
+
+
+        pred_change = predictions[1:] - actuals[:-1]  # predicted change
+        actual_change = actuals[1:] - actuals[:-1] # actual[i+1] - actual[i]
+
+        print('Pred change shape:', pred_change.shape)
+        print('Actual change shape:', actual_change.shape)
+
+        correct = np.sum(np.sign(pred_change) == np.sign(actual_change))
         
+        total = pred_change.shape[0] * pred_change.shape[1]  # total predictions made (number of time steps * number of assets)
+
+        acc = (correct / total) * 100 if total > 0 else 0.0
+        print(f'Prediction accuracy: {acc:.2f}% ({correct}/{total} correct predictions)')
+        
+        # assert False
+        return acc
+
         for i in range(len(predictions) - 1):
             try:
                 # Get change direction
@@ -105,20 +119,28 @@ class MetricsCalculator:
         Args:
             predictions: List of predicted prices/values
             actuals: List of actual prices/values
-        """
-        if not predictions or not actuals or len(predictions) == 0:
-            return 0.0
+        """        
+        assert predictions.shape == actuals.shape, f'Shapes of predictions and actuals must match for MSE calculation. Got {predictions.shape} and {actuals.shape}.'
         
         # Ensure same length
-        min_len = min(len(predictions), len(actuals))
-        predictions_array = np.array(predictions[:min_len])
-        actuals_array = np.array(actuals[:min_len])
+        # min_len = min(len(predictions), len(actuals))
+        # predictions_array = predictions[:min_len]
+        # actuals_array = actuals[:min_len]
         
-        try:
-            mse = np.mean((predictions_array - actuals_array) ** 2)
-            return mse
-        except:
-            return 0.0
+    
+        min = actuals.min(axis = 0)
+        max = actuals.max(axis = 0)
+
+        print(max, min)
+        print('Predictions shape before scaling:', predictions.shape)
+
+        assert min.shape == max.shape == predictions.shape[1:] == actuals.shape[1:], f'Shapes of min, max, and predictions must match. Got {min.shape}, {max.shape}, and {predictions.shape[1:]}.'
+        norm_preds = predictions - min/ (max - min)
+        norm_act = actuals - min/ (max - min)
+        mse = np.mean((norm_preds - norm_act) ** 2)
+        print(f'Mean Squared Error: {mse:.4f}')
+        return mse
+        
     
     def calculate_max_drawdown(self, rewards: list) -> float:
         """
@@ -127,13 +149,13 @@ class MetricsCalculator:
         Args:
             rewards: List of rewards at each step
         """
-        if not rewards or len(rewards) < 2:
+        if len(rewards) < 2:
             return 0.0
         
         cumulative_rewards = np.cumsum(rewards)
         running_max = np.maximum.accumulate(cumulative_rewards)
         drawdowns = (cumulative_rewards - running_max) / np.maximum(running_max, self.initial_amount)
-        
+        print(f'Max drawdown: {np.min(drawdowns) * 100:.2f}%')
         return np.min(drawdowns) * 100
     
     def calculate_win_rate(self, rewards: list) -> float:
@@ -143,11 +165,11 @@ class MetricsCalculator:
         Args:
             rewards: List of rewards at each step
         """
-        if not rewards or len(rewards) == 0:
-            return 0.0
-        
-        positive_rewards = sum(1 for r in rewards if isinstance(r, (int, float)) and r > 0)
-        return (positive_rewards / len(rewards)) * 100
+        temp = np.zeros_like(rewards)
+        temp[rewards > 0] = 1
+        positive_rewards = np.sum(temp)
+        print(f'Win rate: {positive_rewards}/{rewards.shape[0]} positive reward steps')
+        return (positive_rewards / rewards.shape[0]) * 100
     
     def calculate_calmar_ratio(self, rewards: list, annual_return: float) -> float:
         """
@@ -162,7 +184,11 @@ class MetricsCalculator:
         if max_dd == 0:
             return 0.0
         
-        return annual_return / max_dd if max_dd > 0 else 0.0
+        ratio = annual_return / max_dd if max_dd > 0 else 0.0
+        
+        print(f'Calmar ratio: {ratio}')
+        
+        return ratio
     
     def calculate_sortino_ratio(self, rewards: list, periods_per_year: int = 252) -> float:
         """
@@ -172,7 +198,7 @@ class MetricsCalculator:
             rewards: List of rewards at each step
             periods_per_year: Number of trading periods per year
         """
-        if not rewards or len(rewards) < 2:
+        if len(rewards) < 2:
             return 0.0
         
         rewards_array = np.array([r for r in rewards if isinstance(r, (int, float))])
@@ -193,10 +219,12 @@ class MetricsCalculator:
         
         daily_sortino = mean_return / downside_std
         annual_sortino = daily_sortino * np.sqrt(periods_per_year)
+
+        print('Sortino ratio:', annual_sortino)
         
         return annual_sortino
     
-    def calculate_all_metrics(self, data: Dict[str, Any]) -> Dict[str, float]:
+    def calculate_all_metrics(self, data: Dict[str, Any], agent = '') -> Dict[str, float]:
         """
         Calculate all metrics for a single trial result.
         
@@ -206,24 +234,51 @@ class MetricsCalculator:
         Returns:
             Dictionary of all calculated metrics
         """
-        rewards = data.get('rewards', [])
-        predictions = data.get('predictions', [])
-        actuals = data.get('actuals', [])
+        # rewards = data.get('rewards', [])
+        # predictions = data.get('predictions', [])
+        # actuals = data.get('actuals', [])
+
+        print('Calculating metrics for data...')
+
+        rewards = np.array(data['rewards'])
+
+        predictions = np.array(data['predictions'])
+        actuals = np.array(data['actuals'])
+
+        if agent != 'Buy And Hold':
+            temp_pred = predictions.copy()
+
+            mask = np.all(temp_pred != 0, axis=-1)  # Only keep rows where all features have non-zero predictions
+
+            predictions = predictions[mask]
+            actuals = actuals[mask]
+
+            print('Predictions:', np.array(predictions).shape)
+            print('Actuals:', np.array(actuals).shape)
+            print('Temp: ',temp_pred.shape, mask.shape)
+
+        print('Rewards:', np.array(rewards).shape)
+
+        intial_worth = data['initial_worth']
+        end_worth = data['final_worth']
+
         
-        cumulative_return = self.calculate_cumulative_return(rewards)
+        cumulative_return = self.calculate_cumulative_return(intial_worth, end_worth)
         max_dd = self.calculate_max_drawdown(rewards)
         annual_return = cumulative_return  # Simplified - adjust for actual period if needed
         
         metrics = {
-            'profit': self.calculate_profit(rewards),
+            'start_worth': intial_worth,
+            'end_worth': end_worth,
+            'profit': self.calculate_profit(intial_worth, end_worth),
             'cumulative_return_%': cumulative_return,
             'sharpe_ratio': self.calculate_sharpe_ratio(rewards),
             'sortino_ratio': self.calculate_sortino_ratio(rewards),
             'max_drawdown_%': max_dd,
             'win_rate_%': self.calculate_win_rate(rewards),
             'calmar_ratio': self.calculate_calmar_ratio(rewards, annual_return),
-            'prediction_accuracy_%': self.calculate_prediction_accuracy(predictions, actuals),
-            'mse': self.calculate_mse(predictions, actuals),
+            'prediction_accuracy_%': 0 if agent == 'Buy And Hold' else self.calculate_prediction_accuracy(predictions, actuals),
+            'mse': 0 if agent == 'Buy And Hold' else self.calculate_mse(predictions, actuals),
             'num_trades': len([a for a in data.get('actions', []) if a is not None]),
         }
         
@@ -243,6 +298,8 @@ def aggregate_metrics_across_trials(trials: Dict[int, Dict[str, Dict[str, Any]]]
         DataFrame with aggregated metrics
     """
     all_metrics = {}
+
+    print('Agregating metrics across trials...')
     
     # Calculate metrics for each trial
     trial_metrics = {}
@@ -251,8 +308,11 @@ def aggregate_metrics_across_trials(trials: Dict[int, Dict[str, Dict[str, Any]]]
         for dataset, agents in datasets.items():
             trial_metrics[trial_num][dataset] = {}
             for agent, data in agents.items():
-                trial_metrics[trial_num][dataset][agent] = calculator.calculate_all_metrics(data)
+                print(f'Calculating metrics for trial {trial_num}, dataset {dataset}, agent {agent}...')
+                trial_metrics[trial_num][dataset][agent] = calculator.calculate_all_metrics(data, agent)
+            print(f'Calculated metrics for trial {trial_num} on dataset {dataset}')
     
+    print('Calculated metrics for all trials. Now aggregating...')
     # Aggregate across trials
     results = []
     
@@ -274,10 +334,12 @@ def aggregate_metrics_across_trials(trials: Dict[int, Dict[str, Dict[str, Any]]]
             
             for metric_name in metric_names:
                 values = [metrics_per_trial[t][metric_name] for t in trials.keys()]
-                row[f'{metric_name}_mean'] = np.mean(values)
-                row[f'{metric_name}_std'] = np.std(values)
+                row[f'{metric_name}_mean'] = np.mean(values, dtype=np.float64) if all(isinstance(v, (int, float)) for v in values) else 0
+                row[f'{metric_name}_std'] = np.std(values, dtype=np.float64) if all(isinstance(v, (int, float)) for v in values) else 0
             
             results.append(row)
+
+    print('Aggregated metrics for Datasets:', datasets)
     
     return pd.DataFrame(results)
 
@@ -287,6 +349,7 @@ def print_metrics_summary(results_df: pd.DataFrame):
     
     # Define which metrics to display
     display_metrics = [
+        'profit',
         'cumulative_return_%',
         'sharpe_ratio',
         'sortino_ratio',
@@ -354,6 +417,7 @@ def create_matplotlib_table(results_df: pd.DataFrame, figsize: tuple = (20, 12),
     
     # Define metrics to display
     display_metrics = [
+        'profit',
         'cumulative_return_%',
         'sharpe_ratio',
         'sortino_ratio',
@@ -397,7 +461,7 @@ def create_matplotlib_table(results_df: pd.DataFrame, figsize: tuple = (20, 12),
                     if 'ratio' in metric:
                         cell_text = f'{mean_val:.2f}±{std_val:.2f}'
                     elif '%' in metric:
-                        cell_text = f'{mean_val:.1f}%±{std_val:.1f}%'
+                        cell_text = f'{mean_val:.2f}%±{std_val:.2f}%'
                     else:
                         cell_text = f'{mean_val:.0f}±{std_val:.0f}'
                 else:
@@ -430,12 +494,18 @@ def create_matplotlib_table(results_df: pd.DataFrame, figsize: tuple = (20, 12),
                     table[(i, j)].set_facecolor('#f0f0f0')
                 else:
                     table[(i, j)].set_facecolor('#ffffff')
-                
+                import re
                 # Highlight best performing cells (highest values)
                 if j > 0:  # Skip agent name column
                     metric = display_metrics[j - 1]
-                    values = [float(str(td[j]).split('±')[0]) 
-                             for td in table_data[1:]]
+                    try:
+                        values = [float(re.sub(r'[^0-9]' ,'' ,str(td[j])).split('±')[0]) 
+                                for td in table_data[1:]]
+                    except ValueError:
+                        print(f"Could not convert values for metric '{metric}' to float for highlighting. Skipping highlighting for this metric.")
+                        print(f"Values were: {[td[j] for td in table_data[1:]]}")
+                    
+                        raise ValueError(f"Could not convert values for metric '{metric}' to float for highlighting. Skipping highlighting for this metric.")
                     try:
                         max_val = max(values)
                         current_val = values[i - 1]

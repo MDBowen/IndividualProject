@@ -88,7 +88,7 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
     print('state space:',state_space)
 
     env = StockTradingEnv(data, 
-                          reward_scaling = 1e-3,
+                          reward_scaling = 1,
                           state_space = state_space,
                           action_space = stock_dimension,
                           tech_indicator_list = indicators,
@@ -107,12 +107,13 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
     done = False
 
     states = [state]
-    rewards = []
     actions = []
     predictions = []
     actuals = []
 
-    data = {'states':states, 'rewards':rewards, 'actions':actions, 'predictions':predictions, 'actuals':actuals }
+    initial_worth = state[0] + np.sum( np.array(state[1:agent.feature_len + 1]) *np.array(state[agent.feature_len+1:agent.feature_len*2 + 1]))
+
+    data = {'states':states, 'actions':actions, 'predictions':predictions, 'actuals':actuals, 'initial_worth':initial_worth}
 
     print(f'Start on date {env._get_date()} \n')
     steps = 0
@@ -124,12 +125,22 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
         actions.append(action)
 
         state, reward, done, _, dict = env.step(action)
-        actuals.append(state[1:args.enc_in + 1])
+        actuals.append(state[1:agent.feature_len + 1])
         states.append(state)
-        rewards.append(rewards)
 
-        
-        
+    end_worth = state[0] + np.sum( np.array(state[1:agent.feature_len + 1]) *np.array(state[agent.feature_len+1:agent.feature_len*2 + 1]))
+    data['final_worth'] = end_worth
+    data['trades'] = env.trades
+    asset_memory = np.array(env.asset_memory)
+
+    rewards = asset_memory[1:] - asset_memory[:-1]
+    data['rewards'] = rewards
+    print('Final worth:', data['final_worth'])
+    print('Initial worth:', data['initial_worth'])
+    print('Net profit:', data['final_worth'] - data['initial_worth'])
+
+    assert data['final_worth'] - data['initial_worth'] == np.sum(rewards), f"Net profit {data['final_worth'] - data['initial_worth']} does not match sum of rewards {np.sum(rewards)}"
+
     return data
 
 if __name__ == '__main__':
@@ -152,9 +163,12 @@ if __name__ == '__main__':
     csi100_tic = all_tickers['csi100']
     sp100_tic = all_tickers['sp100']
     nasdaq100_tic = all_tickers['nasdaq100']
+    
+    all_tickers = {'sp100': sp100_tic}
+    all_tickers = {'a':['AMGN','AAPL'], 'msft':['MSFT','GOOGL'], 'meta':['META']} # for testing
+    
+    all_args, all_settings = create_args(all_tickers)
 
-    all_args, all_settings = create_args(all_tickers, '')
-    all_tickers = {'sp100', sp100_tic}
     test_sets, all_args, all_tickers = get_data(all_args, all_tickers, indicators = indicators)
 
     n_trials = 1

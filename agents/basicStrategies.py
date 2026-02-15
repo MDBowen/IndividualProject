@@ -16,17 +16,17 @@ form tuple( [balance]  )'''
 
 class Buy_And_Hold:
     def __init__(self, args, hmax):
-        self.feature_size = args.enc_in 
+        self.feature_len = args.enc_in 
         self.index = 0
         self.hmax = hmax
     def get_action(self, state, date):
-        prices = state[1:self.feature_size+1]
+        prices = state[1:self.feature_len+1]
         balance = state[0]
         self.index += 1
         if self.index == 1:
-            return np.ones(self.feature_size, dtype = np.float32) * max(min((balance/(np.sum(prices)*self.hmax)), 1), 0), None
+            return np.ones(self.feature_len, dtype = np.float32) * max(min((balance/(np.sum(prices)*self.hmax)), 1), 0), None
         else:
-            return np.zeros(self.feature_size, dtype = np.float32), None
+            return np.zeros(self.feature_len, dtype = np.float32), None
 
 class Autoformer_Buffer:
     def __init__(self,  max_size, args):
@@ -116,6 +116,7 @@ class PredictorStrategy:
         self.args = args
         self.seq_len = seq_len
         self.features = args.enc_in
+        self.feature_len = features
         print('Model shapes:', seq_len, features)
 
         self.buffer = buffer
@@ -228,6 +229,7 @@ class PredictorStrategyAutoformer:
 
         prediction = self.scaler.inverse_transform(prediction.reshape(self.pred_len, self.feature_len))
         prediction = prediction[0]
+        assert prediction.shape == (self.feature_len,), f'Prediction shape {prediction.shape} is not correct'
         price = np.array(state[1:self.feature_len+1]).reshape(self.feature_len)
 
         holdings = state[self.feature_len+1:self.feature_len*2+1]

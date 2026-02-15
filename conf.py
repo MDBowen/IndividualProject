@@ -15,17 +15,17 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
     args.enc_in = len(tickers)
     args.dec_in = len(tickers)
     args.c_out = len(tickers)
-    args.train_epochs = 10
-    args.trials = 3
+    args.train_epochs = 1
+    args.trials = 1
 
-    args.d_model = 512*2
+    args.d_model = 512  # *2
 
 
     args.freq = freq
 
     args.root_path = 'data/datasets'
 
-    args.load_params = False
+    args.load_params = True
     args.save_params = True
 
     args.start_training = '2015-01-01'
@@ -118,7 +118,7 @@ def get_train_config():
     args.moving_avg = 50 
     args.faction = 1 
     args.distil = True
-    args.dropout = 0.05  
+    args.dropout = 0.1
     args.activation = 'gelu'
     args.scale = True
 

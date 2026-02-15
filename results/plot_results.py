@@ -12,32 +12,10 @@ colours = list(colors.TABLEAU_COLORS)
 
 def plot_results(results, tickers):
 
-    print('Colours',colours)
     datasets = list(results[1].keys())
-    print('Sets :',datasets)
     trials = list(results.keys())
     agents = list(results[1][datasets[0]].keys())
     categories = list(results[1][datasets[0]][agents[0]].keys())
-    print('agents:',agents)
-    print('trials:',trials)
-    print('categories', categories)
-    # Plot Net Values
-
-    # return
-
-    # results = results[1][datasets[0]]['Buy And Hold']
-    # print(list(results.keys()))
-    # actions = np.array(results['actions'])
-    # print('actions shape', actions.shape)
-    # states = np.array(results['states'])
-    # print('states shape:',states.shape)
-    # balances = states[0, :, 0]
-    # prices = states[0, :, 1:features+1]
-    # holdings = states[0, :, features+1: features*2 +1]
-    # print('prices shape',prices.shape)
-    # print('holdings shape',holdings.shape)
-
-    # print('first state', states[0][0] )
 
     for data_name in datasets:
 
@@ -55,7 +33,6 @@ def plot_results(results, tickers):
             holdings = []
             for trial in trials:
                 state = np.array(results[trial][data_name][agent]['states'])
-                print(state.shape)
                 balances.append(state[:, 0])
                 prices.append(state[:, 1:features+1])
                 holdings.append(state[:, features+1:features*2+1])
@@ -90,7 +67,7 @@ def plot_results(results, tickers):
         plt.ylabel('Price')
         plt.xlabel('Timestep')
 
-        for i, sample in enumerate(random.sample(list(range(features)), 3)):
+        for i, sample in enumerate(random.sample(list(range(features)), min(3, features))):
 
             ax = axes[i]
             actual = np.array(results[trials[0]][data_name][agents[0]]['actuals'])
