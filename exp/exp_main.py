@@ -119,7 +119,7 @@ class Exp_Main(Exp_Basic):
         path = os.path.join(self.args.checkpoints, setting)
 
         if not os.path.exists(path):
-            os.makedirs(path)
+            os.makedirs(path, exist_ok=True)
 
         if self.args.load_params:
             try:
@@ -312,7 +312,7 @@ class Exp_Main(Exp_Basic):
         # result save
         folder_path = './results/' + setting + '/'
         if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+            os.makedirs(folder_path, exist_ok=True)
 
         np.save(folder_path + 'real_prediction.npy', preds)
 
