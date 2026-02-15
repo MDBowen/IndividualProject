@@ -6,6 +6,7 @@ logging.basicConfig(format='%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from models import Autoformer
+from models import Transformer
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
 
@@ -30,7 +31,7 @@ class Exp_Main(Exp_Basic):
     def _build_model(self):
         model_dict = {
             'Autoformer': Autoformer,
-            # 'Transformer': Transformer,
+            'Transformer': Transformer,
             # 'Informer': Informer,
             # 'Reformer': Reformer,
         }
@@ -115,6 +116,7 @@ class Exp_Main(Exp_Basic):
         return total_loss
 
     def train(self, setting):
+        setting = str(self.args.model)+'_' + setting
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')

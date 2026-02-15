@@ -2,7 +2,7 @@
 
 from utils.tools import dotdict
 
-def get_config(tickers, data_name, freq = 'd', indicators = None ):
+def get_config(tickers, data_name, freq = 'd', indicators = None, model = 'Autoformer'):
 
     args, _ = get_train_config()
 
@@ -17,9 +17,10 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
     args.c_out = len(tickers)
     args.train_epochs = 1
     args.trials = 1
+    args.patience = 5
 
     args.d_model = 512  # *2
-
+    args.model = model
 
     args.freq = freq
 
@@ -50,7 +51,7 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
                 args.distil,
                 args.des, 0)
     
-    setting = f'{data_name}_{args.start_training}_{args.end_training}_{args.end_testing}_ft:{args.enc_in}_te:{args.train_epochs}'
+    setting = f'_{data_name}_{args.start_training}_{args.end_training}_{args.end_testing}_ft:{args.enc_in}_te:{args.train_epochs}_d:{args.d_model}_sl:{args.seq_len}_pl:{args.pred_len}'
     
     return args, setting
 

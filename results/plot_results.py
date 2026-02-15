@@ -59,9 +59,11 @@ def plot_results(results, tickers):
         # plt.figure(figsize=(12, 6), dpi=120)
         plt.style.use("seaborn-v0_8-whitegrid")
 
-        fig, axes = plt.subplots(3, 1, figsize = (14,8), sharex = False, sharey=False)
-
-        axes = axes.flatten()
+        fig, axes = plt.subplots(min(5, features), 1, figsize = (16,8), sharex = False, sharey=False)
+        if min(5, features) == 1:
+             axes = [axes]
+        else:
+            axes = axes.flatten()
 
         plt.title(f'Agent predicitons on dataset {data_name} for an example asset')
         plt.ylabel('Price')

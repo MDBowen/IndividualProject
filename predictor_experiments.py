@@ -24,13 +24,12 @@ from agents.basicStrategies import BasicStrategy, BasicStrategy_auto, Buy_And_Ho
 from results.plot_results import plot_results
 
 
-def create_args(all_tickers, indicators = None):
-
+def create_args(all_tickers, indicators = None, freq = 'd'):
     args = {}
     settings = {}
 
     for tic in all_tickers.keys():
-        args[tic], settings[tic] = get_config(all_tickers[tic], tic)
+        args[tic], settings[tic]= get_config(all_tickers[tic], tic)
 
     return args, settings
 
@@ -165,7 +164,8 @@ if __name__ == '__main__':
     nasdaq100_tic = all_tickers['nasdaq100']
     
     all_tickers = {'sp100': sp100_tic}
-    all_tickers = {'a':['AMGN','AAPL'], 'msft':['MSFT','GOOGL'], 'meta':['META']} # for testing
+    # all_tickers = {'a':['AMGN','AAPL'], 'msft':['MSFT','GOOGL'], 'meta':['META']} # for testing
+    all_tickers = {'meta':['META']}
     
     all_args, all_settings = create_args(all_tickers)
 
@@ -226,6 +226,21 @@ if __name__ == '__main__':
                                                                  indicators=indicators, 
                                                                  name = 'autoformer prediction', 
                                                                  dataset_name=tic)
+            print('Training Transformer')
+            args.model = 'Transformer'
+            transformer = Exp_Main(args)
+            transformer.train(all_settings[tic])
+
+            print('Training Done')
+            auto_strat = BasicStrategy_auto(args, transformer, transformer.scaler, hmax = 100)
+
+            results[tic]['Transformer Prediction'] = run_strategy(df, 
+                                                                 auto_strat, 
+                                                                 tickers, 
+                                                                 indicators=indicators, 
+                                                                 name = 'transformer prediction', 
+                                                                 dataset_name=tic)
+            args.model = 'Autoformer'
 
     plot_results(trials,all_tickers)
 

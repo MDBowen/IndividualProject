@@ -122,21 +122,16 @@ class MetricsCalculator:
         """        
         assert predictions.shape == actuals.shape, f'Shapes of predictions and actuals must match for MSE calculation. Got {predictions.shape} and {actuals.shape}.'
         
-        # Ensure same length
-        # min_len = min(len(predictions), len(actuals))
-        # predictions_array = predictions[:min_len]
-        # actuals_array = actuals[:min_len]
-        
-    
-        min = actuals.min(axis = 0)
-        max = actuals.max(axis = 0)
+        min = actuals.min()
+        max = actuals.max()
 
         print(max, min)
         print('Predictions shape before scaling:', predictions.shape)
 
-        assert min.shape == max.shape == predictions.shape[1:] == actuals.shape[1:], f'Shapes of min, max, and predictions must match. Got {min.shape}, {max.shape}, and {predictions.shape[1:]}.'
-        norm_preds = predictions - min/ (max - min)
-        norm_act = actuals - min/ (max - min)
+        # assert min.shape == max.shape == predictions.shape[1:] == actuals.shape[1:], f'Shapes of min, max, and predictions must match. Got {min.shape}, {max.shape}, and {predictions.shape[1:]}.'
+        norm_preds = (predictions - min)/(max - min + 1e-8) # add small epsilon to avoid division by zero
+        norm_act = (actuals - min)/(max - min + 1e-8)
+        assert np.all(norm_preds <= 1) and np.all(norm_act <= 1), f"Normalized predictions and actuals should be <= 1 {norm_preds}, {norm_act}"
         mse = np.mean((norm_preds - norm_act) ** 2)
         print(f'Mean Squared Error: {mse:.4f}')
         return mse
