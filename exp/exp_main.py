@@ -64,6 +64,11 @@ class Exp_Main(Exp_Basic):
         if torch.isnan(batch_y_mark).any():
             print('nan in batch_y_mark in exp_main _predict')
 
+        batch_x = batch_x.to(self.device)
+        batch_x_mark = batch_x_mark.to(self.device)
+        dec_inp = dec_inp.to(self.device)
+        batch_y_mark = batch_y_mark.to(self.device)
+
         def _run_model():
             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
             if self.args.output_attention:

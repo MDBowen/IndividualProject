@@ -154,10 +154,10 @@ if __name__ == '__main__':
     nasdaq100_tic = all_tickers['nasdaq100']
 
     all_args, all_settings = create_args(all_tickers, '')
-
+    all_tickers = {'sp100', sp100_tic}
     test_sets, all_args, all_tickers = get_data(all_args, all_tickers, indicators = indicators)
 
-    n_trials = 3
+    n_trials = 1
 
     trials = {}
     
@@ -177,7 +177,6 @@ if __name__ == '__main__':
 
             buy_and_hold = Buy_And_Hold(args, hmax = 100)
             df = test_sets[tic]
-            dense = train_dense(args)
 
             results[tic]['Buy And Hold'] = run_strategy(df, 
                                                         buy_and_hold, 
@@ -218,5 +217,18 @@ if __name__ == '__main__':
 
     print(list(trials.keys()))
     print(list(trials[1].keys()))
+
+    from calculate_metrics import MetricsCalculator, aggregate_metrics_across_trials, print_metrics_summary, create_matplotlib_table, save_metrics_to_csv, save_metrics_to_pickle
+    
+    calculator = MetricsCalculator(initial_amount=100_000)
+    results_df = aggregate_metrics_across_trials(trials, calculator)
+    
+    print_metrics_summary(results_df)
+    
+    # Create matplotlib table
+    create_matplotlib_table(results_df, save_path='metrics_table.png', show=True)
+    
+    save_metrics_to_csv(results_df)
+    save_metrics_to_pickle(results_df)
     
     # save_results()

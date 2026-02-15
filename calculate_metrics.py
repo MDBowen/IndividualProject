@@ -341,7 +341,7 @@ def save_metrics_to_pickle(results_df: pd.DataFrame, filename: str = 'metrics_su
 
 
 def create_matplotlib_table(results_df: pd.DataFrame, figsize: tuple = (20, 12), 
-                           save_path: str = None, show: bool = True):
+                           save_path: str = 'results/table.png', show: bool = True):
     """
     Create a matplotlib table visualization of metrics.
     
