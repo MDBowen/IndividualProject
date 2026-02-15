@@ -15,7 +15,8 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
     args.enc_in = len(tickers)
     args.dec_in = len(tickers)
     args.c_out = len(tickers)
-    args.train_epochs = 10
+    args.train_epochs = 1
+    args.trials = 3
 
     args.d_model = 512*2
 
@@ -24,7 +25,7 @@ def get_config(tickers, data_name, freq = 'd', indicators = None ):
 
     args.root_path = 'data/datasets'
 
-    args.load_params = True
+    args.load_params = False
     args.save_params = True
 
     args.start_training = '2015-01-01'

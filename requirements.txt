@@ -47,3 +47,4 @@ torchvision
 numpy
 matplotlib
 reformer_pytorch
+finrl

@@ -153,14 +153,11 @@ if __name__ == '__main__':
     sp100_tic = all_tickers['sp100']
     nasdaq100_tic = all_tickers['nasdaq100']
 
-    # all_tickers = { 'sp100':sp100_tic }
-    # all_tickers = {'amg':['AAPL','MSFT','GOOGL']}
-
     all_args, all_settings = create_args(all_tickers, '')
 
     test_sets, all_args, all_tickers = get_data(all_args, all_tickers, indicators = indicators)
 
-    n_trials = 1
+    n_trials = 3
 
     trials = {}
     

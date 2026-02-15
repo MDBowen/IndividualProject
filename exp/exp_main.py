@@ -201,7 +201,7 @@ class Exp_Main(Exp_Basic):
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
         if self.args.save_params:
-            os.makedirs(path)
+            os.makedirs(path, exist_ok=True)
             self.model.load_state_dict(torch.load(path + '/checkpoint.pth' ))
 
         self.model.eval()
@@ -218,7 +218,7 @@ class Exp_Main(Exp_Basic):
         trues = []
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+            os.makedirs(folder_path, exist_ok=True)
 
         self.model.eval()
         with torch.no_grad():
@@ -255,7 +255,7 @@ class Exp_Main(Exp_Basic):
         # result save
         folder_path = './results/' + setting + '/'
         if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+            os.makedirs(folder_path, exist_ok=True)
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}'.format(mse, mae))
