@@ -226,6 +226,7 @@ class PredictorStrategyAutoformer:
         with torch.no_grad():
 
             prediction, _ = self.model._predict(x, y, x_mark, y_mark)
+            prediction = prediction.cpu()
 
         prediction = self.scaler.inverse_transform(prediction.reshape(self.pred_len, self.feature_len))
         prediction = prediction[0]

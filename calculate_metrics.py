@@ -135,7 +135,30 @@ class MetricsCalculator:
         mse = np.mean((norm_preds - norm_act) ** 2)
         print(f'Mean Squared Error: {mse:.4f}')
         return mse
+    def calculate_mae(self, predictions: list, actuals: list) -> float:
+        """
+        Calculate Mean Absolute Error between predictions and actuals.
         
+        Args:
+            predictions: List of predicted prices/values
+            actuals: List of actual prices/values
+        """        
+        assert predictions.shape == actuals.shape, f'Shapes of predictions and actuals must match for MAE calculation. Got {predictions.shape} and {actuals.shape}.'
+        
+        min = actuals.min()
+        max = actuals.max()
+
+        print(max, min)
+        print('Predictions shape before scaling:', predictions.shape)
+
+        # assert min.shape == max.shape == predictions.shape[1:] == actuals.shape[1:], f'Shapes of min, max, and predictions must match. Got {min.shape}, {max.shape}, and {predictions.shape[1:]}.'
+        norm_preds = (predictions - min)/(max - min + 1e-8) # add small epsilon to avoid division by zero
+        norm_act = (actuals - min)/(max - min + 1e-8)
+        assert np.all(norm_act <= 1), f"Normalized predictions and actuals should be <= 1 {norm_preds}, {norm_act}"
+        mae_norm = np.mean(np.abs(norm_preds - norm_act))
+        mae = np.mean(np.abs(predictions - actuals))
+        print(f'Mean Absolute Error: {mae_norm:.4f}')
+        return mae, mae_norm
     
     def calculate_max_drawdown(self, rewards: list) -> float:
         """
@@ -252,6 +275,12 @@ class MetricsCalculator:
             print('Actuals:', np.array(actuals).shape)
             print('Temp: ',temp_pred.shape, mask.shape)
 
+            mae, mae_norm = self.calculate_mae(predictions, actuals)
+        else:
+            mae = 0
+            mae_norm = 0
+
+
         print('Rewards:', np.array(rewards).shape)
 
         intial_worth = data['initial_worth']
@@ -261,6 +290,7 @@ class MetricsCalculator:
         cumulative_return = self.calculate_cumulative_return(intial_worth, end_worth)
         max_dd = self.calculate_max_drawdown(rewards)
         annual_return = cumulative_return  # Simplified - adjust for actual period if needed
+
         
         metrics = {
             'start_worth': intial_worth,
@@ -273,7 +303,8 @@ class MetricsCalculator:
             'win_rate_%': self.calculate_win_rate(rewards),
             'calmar_ratio': self.calculate_calmar_ratio(rewards, annual_return),
             'prediction_accuracy_%': 0 if agent == 'Buy And Hold' else self.calculate_prediction_accuracy(predictions, actuals),
-            'mse': 0 if agent == 'Buy And Hold' else self.calculate_mse(predictions, actuals),
+            'mae': 0 if agent == 'Buy And Hold' else mae,
+            'mae_norm': 0 if agent == 'Buy And Hold' else mae_norm,
             'num_trades': len([a for a in data.get('actions', []) if a is not None]),
         }
         
@@ -351,7 +382,8 @@ def print_metrics_summary(results_df: pd.DataFrame):
         'max_drawdown_%',
         'win_rate_%',
         'prediction_accuracy_%',
-        'mse',
+        'mae',
+        'mae_norm',
         'num_trades'
     ]
     
@@ -419,7 +451,8 @@ def create_matplotlib_table(results_df: pd.DataFrame, figsize: tuple = (20, 12),
         'max_drawdown_%',
         'win_rate_%',
         'prediction_accuracy_%',
-        'mse',
+        'mae',
+        'mae_norm',
         'num_trades'
     ]
     
@@ -455,6 +488,8 @@ def create_matplotlib_table(results_df: pd.DataFrame, figsize: tuple = (20, 12),
                     
                     if 'ratio' in metric:
                         cell_text = f'{mean_val:.2f}±{std_val:.2f}'
+                    elif 'mae' in metric:
+                        cell_text = f'{mean_val:.4f}±{std_val:.4f}'
                     elif '%' in metric:
                         cell_text = f'{mean_val:.2f}%±{std_val:.2f}%'
                     else:

@@ -59,8 +59,10 @@ def plot_results(results, tickers):
         # plt.figure(figsize=(12, 6), dpi=120)
         plt.style.use("seaborn-v0_8-whitegrid")
 
-        fig, axes = plt.subplots(min(5, features), 1, figsize = (16,8), sharex = False, sharey=False)
-        if min(5, features) == 1:
+        max_graphs = 4
+
+        fig, axes = plt.subplots(min(max_graphs, features), 1, figsize = (16,8), sharex = False, sharey=False)
+        if min(max_graphs, features) == 1:
              axes = [axes]
         else:
             axes = axes.flatten()
