@@ -29,7 +29,7 @@ So far, only experiments on some price prediciton methods have been finished, he
 All datasets are an aggregation of ~80-100 historical close data
 
 <p align="center">
-<img src="rresults/Experiment Results/metrics_table.png" height = "250" alt="" align=center />
+<img src="results/Experiment Results/metrics_table.png" height = "250" alt="" align=center />
 <br><br>
 <b>Figure 1.</b> Table of a performance on a basic strategy and prediction metrics
 </p>
