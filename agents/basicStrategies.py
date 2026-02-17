@@ -55,7 +55,6 @@ class Autoformer_Buffer:
         x = list(self.prices)[-self.seq_len:]
         y_label = list(self.prices)[-self.label_len:]
 
-
         x_dates = list(self.dates)[-self.seq_len:]
         y_dates = list(self.dates)[-self.label_len:]
 
@@ -80,98 +79,6 @@ class Autoformer_Buffer:
         y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1])
 
         return x, x_mark, y_mark
-
-
-class Buffer:
-    def __init__(self,  max_size=1000, seq_len=96, feature_size=98):
-        self.states = deque(maxlen=max_size)
-        self.seq_len = seq_len
-        self.feature_size = feature_size
-        self.max_size = max_size
-    
-    def add(self, item):
-        self.states.append(item)
-    
-    def get_all(self):
-        return list(self.states)
-    
-    def get_size(self):
-        return len(list(self.states))
-
-    def get_last(self):
-        states = np.array(list(self.states))
-        # print(f'Buffer states shape before slicing: {states.shape}')
-        prices = states[-self.seq_len:]
-        # print(f'Buffer prices shape: {prices.shape}')
-        return prices.reshape(self.seq_len, self.feature_size)
-
-class PredictorStrategy: 
-    def __init__(self, args, predictor_model, scaler, hmax, buffer = None):
-        '''Super class for predictor only strategies as agents for FinRL stocktradin_env'''
-        self.scaler = scaler
-        self.model = predictor_model
-
-        # Every predictior will require a buffer to get a number of states
-        seq_len, features = self.model.input_shape[0], self.model.input_shape[1]
-        self.args = args
-        self.seq_len = seq_len
-        self.features = args.enc_in
-        self.feature_len = features
-        print('Model shapes:', seq_len, features)
-
-        self.buffer = buffer
-
-        if self.buffer is None:
-            self.buffer = Buffer(max_size=1000, seq_len=seq_len, feature_size = features)
-            
-
-    def state_to_input(self, state):
-        '''Turns the state to a valid input to the model'''
-
-        # valid for single asset
-        close_data = state[1:self.features + 1]
-        holdings = state[self.features+1, self.features*2 +1]
-        balance = state[0]
-
-
-        self.buffer.add(close_data)
-
-        if self.buffer.get_size() >= self.seq_len:
-            input = self.buffer.get_last()
-        
-            x = self.scaler.transform(input)      
-            x = torch.from_numpy(x.reshape(1, x.shape[0], x.shape[1])).float()
-
-            return x
-        else:
-            return None
-
-    def prediciton_to_action(self, prediction, price):
-        '''Implements strategy'''
-        return self.strategy_func(prediction, price)
-    
-    def get_action(self, state, date):
-
-        input = self.state_to_input(state)
-
-        # If we cannot get a prediction, return an action that does nothing
-        if input == None:
-            return np.zeros(self.features)
-        self.model.model.eval()
-
-        with torch.no_grad():
-            prediction = self.model(input)
-            
-        prediction = prediction.reshape(self.args.pred_len, self.features)
-        prediction = self.scaler.inverse_transform(prediction)
-        price = state[1:self.features + 1]
-        action = self.prediciton_to_action(prediction, price)
-
-        return action
-    
-    def strategy_func(self, prediciton, state):
-        assert False, 'You are using the superclass, please implement a sub class that implements self.strategy_func'
-        return None
 
 class PredictorStrategyAutoformer:
     def __init__(self, args, predictor_model, scaler, hmax):
@@ -230,9 +137,10 @@ class PredictorStrategyAutoformer:
 
         prediction = self.scaler.inverse_transform(prediction.reshape(self.pred_len, self.feature_len))
         prediction = prediction[0]
-        assert prediction.shape == (self.feature_len,), f'Prediction shape {prediction.shape} is not correct'
-        price = np.array(state[1:self.feature_len+1]).reshape(self.feature_len)
 
+        assert prediction.shape == (self.feature_len,), f'Prediction shape {prediction.shape} is not correct'
+
+        price = np.array(state[1:self.feature_len+1]).reshape(self.feature_len)
         holdings = state[self.feature_len+1:self.feature_len*2+1]
         balance = state[0]
 
@@ -247,7 +155,7 @@ class PredictorStrategyAutoformer:
         return None
     
 
-class BasicStrategy_auto(PredictorStrategyAutoformer):
+class BasicStrategy(PredictorStrategyAutoformer):
     def __init__(self, args, predictor_model, scaler, hmax):
         super().__init__(args, predictor_model, scaler, hmax)
 
@@ -257,28 +165,9 @@ class BasicStrategy_auto(PredictorStrategyAutoformer):
 
         action = np.zeros(self.feature_len)
 
-        action[price_change > 0] = 1.0 # buy
-          # sell
+        action[price_change > 0] = 1.0
         action = action*np.dot(action, price)*self.hmax/balance
 
         action[price_change < 0] = -1.0
-
-        return action
-
-class BasicStrategy(PredictorStrategy):
-    def __init__(self, args, predictor_model, scaler):
-        super().__init__(args, predictor_model, scaler)
-
-    def strategy_func(self, prediciton, state):
-        
-        price = state[1]
-        prediciton = prediciton[0][0]
-
-        price_change = prediciton - price
-
-        action = np.zeros(self.features)
-
-        action[price_change > 0] = 1  # buy
-        action[price_change < 0] = -1  # sell
 
         return action

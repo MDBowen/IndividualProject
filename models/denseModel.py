@@ -99,10 +99,6 @@ def train_dense(args, load_path = None, save_path = None):
     df, df_raw = train_set.get_data_frame()
     print(f'Training Dense from {df_raw['date'].min()} to {df_raw['date'].max()} ')
 
-    seq_len = args.seq_len
-    feature_size = args.enc_in
-    pred_len = args.pred_len
-    batch_size = args.batch_size
     epochs = args.train_epochs
 
     model = DenseModel(args)
@@ -154,7 +150,6 @@ def train_dense(args, load_path = None, save_path = None):
 
     if save_path is not None:
         model.save_params(filepath = save_path)
-
 
     model.model.eval()
 

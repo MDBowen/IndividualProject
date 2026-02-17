@@ -5,23 +5,24 @@ import gymnasium as gym
 import pandas as pd
 import os
 import torch
+
 from data.tickers import all_tickers
 from data.test_yahoo_downloader import TestYahooDownloader
 
 from finrl import config_tickers
 from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
-# from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
-from test_env_stocktrading import StockTradingEnv
+from enviroments.test_env_stocktrading import StockTradingEnv
 
 from models.denseModel import train_dense
 from exp.exp_main import Exp_Main
 
-from conf import get_config
+from configs.conf import get_config
 
-from agents.basicStrategies import BasicStrategy, BasicStrategy_auto, Buy_And_Hold
-
+from agents.basicStrategies import BasicStrategy, Buy_And_Hold
 from results.plot_results import plot_results
+from results.calculate_metrics import MetricsCalculator, aggregate_metrics_across_trials, print_metrics_summary, create_matplotlib_table, save_metrics_to_csv, save_metrics_to_pickle
+
 
 
 def create_args(all_tickers, indicators = None, freq = 'd'):
@@ -111,14 +112,10 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
     actuals = []
 
     initial_worth = state[0] + np.sum( np.array(state[1:agent.feature_len + 1]) *np.array(state[agent.feature_len+1:agent.feature_len*2 + 1]))
-
     data = {'states':states, 'actions':actions, 'predictions':predictions, 'actuals':actuals, 'initial_worth':initial_worth}
 
-    print(f'Start on date {env._get_date()} \n')
-    steps = 0
     while not done:
 
-        steps+=1
         action, prediction = agent.get_action(state, env._get_date())
         predictions.append(prediction)
         actions.append(action)
@@ -134,9 +131,6 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
 
     rewards = asset_memory[1:] - asset_memory[:-1]
     data['rewards'] = rewards
-    print('Final worth:', data['final_worth'])
-    print('Initial worth:', data['initial_worth'])
-    print('Net profit:', data['final_worth'] - data['initial_worth'])
 
     assert data['final_worth'] - data['initial_worth'] == np.sum(rewards), f"Net profit {data['final_worth'] - data['initial_worth']} does not match sum of rewards {np.sum(rewards)}"
 
@@ -145,9 +139,7 @@ def run_strategy(data, agent, tickers, indicators = [], name = 'n/a', dataset_na
 if __name__ == '__main__':
 
     # call arguments
-
     # call training datasets with corresponding enviroment test sets
-
     indicators = [              # 8 standard indicators
         'macd',
         'boll_ub',
@@ -158,23 +150,11 @@ if __name__ == '__main__':
         'close_30_sma',
         'close_60_sma'
     ]
-
-    csi100_tic = all_tickers['csi100']
-    sp100_tic = all_tickers['sp100']
-    nasdaq100_tic = all_tickers['nasdaq100']
-    
-    all_tickers = {'sp100': sp100_tic}
-    # all_tickers = {'a':['AMGN','AAPL'], 'msft':['MSFT','GOOGL'], 'meta':['META']} # for testing
-    all_tickers = {'meta':['META']}
     
     all_args, all_settings = create_args(all_tickers)
-
     test_sets, all_args, all_tickers = get_data(all_args, all_tickers, indicators = indicators)
-
-    n_trials = 1
-
+    n_trials = 5
     trials = {}
-    
 
     for trial in range(1, n_trials+1):
 
@@ -185,7 +165,6 @@ if __name__ == '__main__':
 
             results[tic] = {}        
 
-            print(f'Now running the {tic} test and train scheme')
             args = all_args[tic]
             tickers = all_tickers[tic]
 
@@ -202,7 +181,7 @@ if __name__ == '__main__':
             print('Training Dense')
 
             dense = train_dense(args)
-            dense_strat = BasicStrategy_auto(args, dense, dense.scaler, hmax = 100)
+            dense_strat = BasicStrategy(args, dense, dense.scaler, hmax = 100)
 
             results[tic]['MLP Prediction'] = run_strategy(df,
                                                         dense_strat, 
@@ -218,8 +197,7 @@ if __name__ == '__main__':
 
             print('Training Done')
 
-            auto_strat = BasicStrategy_auto(args, autoformer, autoformer.scaler, hmax = 100)
-
+            auto_strat = BasicStrategy(args, autoformer, autoformer.scaler, hmax = 100)
             results[tic]['Autoformer Prediction'] = run_strategy(df, 
                                                                  auto_strat, 
                                                                  tickers, 
@@ -232,8 +210,7 @@ if __name__ == '__main__':
             transformer.train(all_settings[tic])
 
             print('Training Done')
-            auto_strat = BasicStrategy_auto(args, transformer, transformer.scaler, hmax = 100)
-
+            auto_strat = BasicStrategy(args, transformer, transformer.scaler, hmax = 100)
             results[tic]['Transformer Prediction'] = run_strategy(df, 
                                                                  auto_strat, 
                                                                  tickers, 
@@ -242,12 +219,7 @@ if __name__ == '__main__':
                                                                  dataset_name=tic)
             args.model = 'Autoformer'
 
-    plot_results(trials,all_tickers)
-
-    print(list(trials.keys()))
-    print(list(trials[1].keys()))
-
-    from calculate_metrics import MetricsCalculator, aggregate_metrics_across_trials, print_metrics_summary, create_matplotlib_table, save_metrics_to_csv, save_metrics_to_pickle
+    plot_results(trials, all_tickers)
     
     calculator = MetricsCalculator(initial_amount=100_000)
     results_df = aggregate_metrics_across_trials(trials, calculator)
@@ -255,7 +227,7 @@ if __name__ == '__main__':
     print_metrics_summary(results_df)
     
     # Create matplotlib table
-    create_matplotlib_table(results_df, save_path='metrics_table.png', show=True)
+    create_matplotlib_table(results_df, save_path='results/metrics_table.png', show=True)
     
     save_metrics_to_csv(results_df)
     save_metrics_to_pickle(results_df)

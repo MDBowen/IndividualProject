@@ -1,6 +1,7 @@
 
 
 from utils.tools import dotdict
+import torch
 
 def get_config(tickers, data_name, freq = 'd', indicators = None, model = 'Autoformer'):
 
@@ -15,41 +16,40 @@ def get_config(tickers, data_name, freq = 'd', indicators = None, model = 'Autof
     args.enc_in = len(tickers)
     args.dec_in = len(tickers)
     args.c_out = len(tickers)
-    args.train_epochs = 1
-    args.trials = 1
-    args.patience = 5
+    args.train_epochs = 10
+    args.trials = 5
+    args.patience = 10
 
-    args.d_model = 512  # *2
+    args.d_model = 512*2  # *2
     args.model = model
+
+    if torch.cuda.is_available():
+        args.use_gpu = True
+        args.gpu = 0
+        args.devices = [args.gpu]
+    else:
+        
+        args.use_gpu = False
+        args.gpu = None
+        args.devices = None
+
+    # If you want multiple GPUs:
+    args.multi_gpu = False
+    if args.multi_gpu and torch.cuda.is_available():
+        args.devices = list(range(torch.cuda.device_count()))
+        print(f'Using multiple GPUs: {args.devices}')
+
 
     args.freq = freq
 
     args.root_path = 'data/datasets'
 
-    args.load_params = True
-    args.save_params = True
+    args.load_params = False
+    args.save_params = False
 
     args.start_training = '2015-01-01'
     args.end_training = '2025-01-01'
     args.end_testing = '2026-01-01'
-
-    setting = '{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(
-                args.model_id,
-                args.model,
-                args.data,
-                args.features,
-                args.seq_len,
-                args.label_len,
-                args.pred_len,
-                args.d_model,
-                args.n_heads,
-                args.e_layers,
-                args.d_layers,
-                args.d_ff,
-                args.factor,
-                args.embed,
-                args.distil,
-                args.des, 0)
     
     setting = f'_{data_name}_{args.start_training}_{args.end_training}_{args.end_testing}_ft:{args.enc_in}_te:{args.train_epochs}_d:{args.d_model}_sl:{args.seq_len}_pl:{args.pred_len}'
     
