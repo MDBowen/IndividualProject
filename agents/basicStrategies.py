@@ -15,18 +15,26 @@ form tuple( [balance]  )'''
 
 
 class Buy_And_Hold:
-    def __init__(self, args, hmax):
+    def __init__(self, args, hmax, return_prediction = False):
         self.feature_len = args.enc_in 
         self.index = 0
         self.hmax = hmax
+        self.return_pred = return_prediction
     def get_action(self, state, date):
         prices = state[1:self.feature_len+1]
         balance = state[0]
         self.index += 1
+
         if self.index == 1:
-            return np.ones(self.feature_len, dtype = np.float32) * max(min((balance/(np.sum(prices)*self.hmax)), 1), 0), None
+            action = np.ones(self.feature_len, dtype = np.float32) * max(min((balance/(np.sum(prices)*self.hmax)), 1), 0)
         else:
-            return np.zeros(self.feature_len, dtype = np.float32), None
+            action = np.zeros(self.feature_len, dtype = np.float32)
+
+        if self.return_pred:
+            return action, None
+        else:
+            return action
+        
 
 class Autoformer_Buffer:
     def __init__(self,  max_size, args):
@@ -81,7 +89,7 @@ class Autoformer_Buffer:
         return x, x_mark, y_mark
 
 class PredictorStrategyAutoformer:
-    def __init__(self, args, predictor_model, scaler, hmax):
+    def __init__(self, args, predictor_model, scaler, hmax, return_prediction = False):
 
         self.scaler = scaler
         self.model = predictor_model
@@ -91,6 +99,7 @@ class PredictorStrategyAutoformer:
         self.label_len = args.label_len
         self.pred_len = args.pred_len
         self.args = args
+        self.return_prediction = return_prediction
 
         self.buffer = Autoformer_Buffer(max_size=1000, args = args)
 
@@ -147,9 +156,11 @@ class PredictorStrategyAutoformer:
         action = self.prediciton_to_action(prediction, price, holdings, balance)
 
         assert action.shape == prediction.shape, 'Action and prediction not the same shape'
-
-        return np.array(action.clip(min=-1, max=1).astype(np.float32), dtype=np.float32), prediction
-
+        if self.return_prediction:
+            return np.array(action.clip(min=-1, max=1).astype(np.float32), dtype=np.float32), prediction
+        else:
+            return np.array(action.clip(min=-1, max=1).astype(np.float32), dtype=np.float32)
+        
     def strategy_func(self, prediciton, prices):
         assert False, 'You are using the superclass, please implement a sub class that implements self.strategy_func'
         return None
