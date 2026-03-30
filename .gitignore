@@ -1,6 +1,6 @@
 Autoformer/
 FinRL/
-
+venv/
 
 *.csv
 *.pth
