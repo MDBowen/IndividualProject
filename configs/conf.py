@@ -16,8 +16,8 @@ def get_config(tickers, data_name, freq = 'd', indicators = None, model = 'Autof
     args.enc_in = len(tickers)
     args.dec_in = len(tickers)
     args.c_out = len(tickers)
-    args.train_epochs = 10
-    args.trials = 5
+    args.train_epochs = 1
+    args.trials = 1
     args.patience = 10
 
     args.d_model = 512*2  # *2

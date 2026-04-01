@@ -7,6 +7,10 @@ from sklearn.preprocessing import StandardScaler
 
 from data_provider.data_factory import data_provider
 
+class Flatten(torch.nn.Module):
+    def forward(self, x):
+        return x.flatten(1)
+
 class DenseModel(torch.nn.Module): 
     def __init__(self, args, hidden_layer_sizes = None):
         super(DenseModel, self).__init__()
@@ -32,7 +36,7 @@ class DenseModel(torch.nn.Module):
         self.default_path = self.basepath + '/' + self.model_folder + '/' + self.default_name + '.pth'
 
         self.model = torch.nn.Sequential(
-            torch.nn.Flatten(),
+            Flatten(),
             torch.nn.Linear(input_size, l[0]),
             torch.nn.LeakyReLU(),
             torch.nn.Dropout(0.1),
@@ -125,7 +129,9 @@ def train_dense(args, load_path = None, save_path = None):
 
         epoch_time = time.time()
         for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
-
+            
+            if i==0:
+                print(batch_x.shape, batch_y.shape)
             optimizer.zero_grad()
 
             batch_x = batch_x.float()

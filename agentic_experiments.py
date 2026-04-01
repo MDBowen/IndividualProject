@@ -15,6 +15,7 @@ from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 from enviroments.test_env_stocktrading import StockTradingEnv 
 
 from agents.basicStrategies import Buy_And_Hold
+from models.denseModel import train_dense
 
 from stable_baselines3.common.logger import configure
 
@@ -22,6 +23,8 @@ from finrl.config import TRAINED_MODEL_DIR
 from finrl.agents.stablebaselines3.models import DRLAgent
 from finrl.main import check_and_make_directories
 from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
+
+from agents.modelbased_TD3.mode_based_TD3 import ModelBasedTD3
 
 check_and_make_directories([TRAINED_MODEL_DIR])
 
@@ -94,7 +97,6 @@ def train_agent(agent_n, data, model_kwargs, indicators = [], dataset_name = 'n/
     
     print(f'Training {agent_n} on dataset {dataset_name} from {data['date'].min()} to {data['date'].max()} in StockTradingEnv \n')
 
-
     stock_dimension = len(data.tic.unique())
     state_space = 1 + 2*stock_dimension + len(indicators)*stock_dimension
 
@@ -115,19 +117,30 @@ def train_agent(agent_n, data, model_kwargs, indicators = [], dataset_name = 'n/
     }
 
     baselines = ['ddpg','ppo','td3']
+    MODELS = {'mb_td3': ModelBasedTD3}  #{'mb_td3':{"batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001} }
+    e_train_gym = StockTradingEnv(df = data, **env_kwargs)
+    env_train, _ = e_train_gym.get_sb_env()
+    agent = DRLAgent(env = env_train)
 
-    if agent_n in baselines:
-    
-        e_train_gym = StockTradingEnv(df = data, **env_kwargs)
-        env_train, _ = e_train_gym.get_sb_env()
-        agent = DRLAgent(env = env_train)
-        model = agent.get_model(agent_n, model_kwargs= model_kwargs)
-        return agent.train_model(model = model, tb_log_name=agent_n, total_timesteps=5_000)
-    
+    if agent_n in baselines:        
+        model = agent.get_model(agent_n, model_kwargs = model_kwargs)
     else: 
+        from configs.conf import get_config
 
-        get_agent = agents[agent_n]
+        dynamics_model = train_dense(get_config( all_tickers['sp100']  ,'sp100')[0])
 
+        model = MODELS[agent_n](
+            policy="ModelBasedMLP",
+            env=env_train,
+            dynamics_model=dynamics_model,
+            tensorboard_log=None,
+            verbose=1,
+            policy_kwargs=None,
+            seed=None,
+            **model_kwargs,
+        )
+        
+    return agent.train_model(model = model, tb_log_name=agent_n, total_timesteps=5_00)
 
 def test_agent(agent, data, indicatos = [], name = 'n/a', dataset_name = 'n/a', baselines = False):
 
@@ -154,11 +167,7 @@ def test_agent(agent, data, indicatos = [], name = 'n/a', dataset_name = 'n/a', 
 
     e_trade_gym = StockTradingEnv(df = data, **env_kwargs)
 
-    if baselines:
-        df_account_value, df_actions = DRLAgent.DRL_prediction(model = agent, environment = e_trade_gym)
-
-    else:
-        raise NotImplementedError #TODO
+    df_account_value, df_actions = DRLAgent.DRL_prediction(model = agent, environment = e_trade_gym)
 
     return df_account_value, df_actions
 
@@ -233,19 +242,22 @@ if __name__ == '__main__':
 
     n_trials = 1
     # agents = ['ddpg','ppo','td3']
-    agents = ['ppo']
+    agents = ['ppo','td3']
+    agents = ['td3','mb_td3']
     agent_kwargs = {
         'ppo':{
             "n_steps": 2048,
             "ent_coef": 0.01,
             "learning_rate": 0.00025,
             "batch_size": 128,
-            }
+            },
+        'td3':{"batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001},
+        'mb_td3':{"batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001}
         }
     all_trials = {}
 
-    finrl_baseline = ['ddpg','ppo','td3']
-
+    # finrl_baseline = ['ddpg','ppo','td3']
+    values = {}
     for trial in range(1, n_trials+1):
         results = {}
         all_trials[trial] = results
@@ -260,10 +272,9 @@ if __name__ == '__main__':
 
                 trained_agent = train_agent(agent, df_train, model_kwargs=agent_kwargs[agent], indicators = indicators, dataset_name=dataset)
 
-
                 test_values, actions = test_agent(trained_agent, df_test, indicatos=indicators, name = agent, dataset_name = dataset )
 
-    values = {'ppo':test_values}
+            values = {agent:test_values}
 
     plot_values(values)
                 
