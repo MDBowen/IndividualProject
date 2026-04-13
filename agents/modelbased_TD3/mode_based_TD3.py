@@ -33,7 +33,7 @@ from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
 SelfTD3 = TypeVar("SelfTD3", bound="ModelBasedTD3")
 
-from utils.custom_buffers import SequenceReplayBuffer
+from utils.custom_buffers import SequenceReplayBuffer, CustomReplayBuffer
 from agents.modelbased_TD3.policies import ModelBasedTD3Policy
 
 class TimestepBuffer:
@@ -54,7 +54,7 @@ class TimestepBuffer:
     def get(self):
         return np.stack(list(self.buffer))  # (seq_len, n_features)
     
-    def get_batch(self):
+    def get_as_batch(self):
         return np.stack(list(self.buffer))[np.newaxis, :]  # (1, seq_len, n_features)
     
 class ModelBasedTD3(OffPolicyAlgorithm):
@@ -140,7 +140,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         dynamics_model_timesteps: int = 96,
         dynamics_model_pred_len: int = 24,
         action_noise: ActionNoise | None = None,
-        replay_buffer_class: type[ReplayBuffer] | None = None,
+        replay_buffer_class: type[CustomReplayBuffer] = CustomReplayBuffer,
         replay_buffer_kwargs: dict[str, Any] | None = None,
         optimize_memory_usage: bool = False,
         n_steps: int = 1,
@@ -189,13 +189,13 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         )   # We need to redifine this as the policy now takes the concatenation of state, prediciton
         self.actor_observation_space = self.policy_observation_space
         self.critic_observation_space = self.observation_space
-        self.timestep_buffer = TimestepBuffer(seq_len=dynamics_model_timesteps, n_features=dynamics_model.feature_size)
-        self.sequence_replay_buffer = SequenceReplayBuffer(100_000, dynamics_model_timesteps, dynamics_model_pred_len, dynamics_model.feature_size, dynamics_model.feature_size)
         self.dynamics_model = dynamics_model
         self.train_dynamics_model = True
+        self.window_buffer = TimestepBuffer(seq_len=dynamics_model_timesteps, n_features=dynamics_model.feature_size)
         self.policy_delay = policy_delay
         self.target_noise_clip = target_noise_clip
         self.target_policy_noise = target_policy_noise
+        
     
         if _init_setup_model:
             self._setup_model()
@@ -214,14 +214,15 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         assert isinstance(set_train, bool), 'set_train true or false'
         self.train_dynamics_model = set_train
 
-    def _setup_model(self) -> None:
-        super()._setup_model()
-        self._create_aliases()
-        # Running mean and running var
-        self.actor_batch_norm_stats = get_parameters_by_name(self.actor, ["running_"])
-        self.critic_batch_norm_stats = get_parameters_by_name(self.critic, ["running_"])
-        self.actor_batch_norm_stats_target = get_parameters_by_name(self.actor_target, ["running_"])
-        self.critic_batch_norm_stats_target = get_parameters_by_name(self.critic_target, ["running_"])
+    # def _setup_model(self) -> None:
+    #     super()._setup_model()
+    #     self.setup
+    #     self._create_aliases()
+    #     # Running mean and running var
+    #     self.actor_batch_norm_stats = get_parameters_by_name(self.actor, ["running_"])
+    #     self.critic_batch_norm_stats = get_parameters_by_name(self.critic, ["running_"])
+    #     self.actor_batch_norm_stats_target = get_parameters_by_name(self.actor_target, ["running_"])
+    #     self.critic_batch_norm_stats_target = get_parameters_by_name(self.critic_target, ["running_"])
 
     def _create_aliases(self) -> None:
         self.actor = self.policy.actor
@@ -292,7 +293,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         last_prices = self.get_prices(self._last_original_obs)
         next_prices = self.get_prices(next_obs)
 
-        self.sequence_replay_buffer.add(last_prices, next_prices, [], 0, dones)
+        # self.sequence_replay_buffer.add(last_prices, next_prices, [], 0, dones)
 
         self._last_obs = new_obs
         # Save the unnormalized observation
@@ -311,7 +312,6 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             self._n_updates += 1
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
-            pred_data = self.sequence_replay_buffer.sample(batch_size)
             # For n-step replay, discount factor is gamma**n_steps (when no early termination)
             discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
 
@@ -321,7 +321,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
 
                 next_obs = replay_data.next_observations
-                next_prices = pred_data['next_observations']
+                next_prices = replay_data.next_pred_obs
 
                 next_prediction = self.dynamics_model(next_prices)
 
@@ -333,7 +333,6 @@ class ModelBasedTD3(OffPolicyAlgorithm):
 
                 # Compute the next Q-values: min over all critics targets
                 next_obs = replay_data.next_observations
-                print(f'next_obs: {next_obs.shape}, next_actions:{next_actions.shape}')
                 next_q_values = th.cat(self.critic_target(next_obs, next_actions), dim=1)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
@@ -356,25 +355,24 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             # Optimize the dynamics model
 
             if self.train_dynamics_model:
-                prices = pred_data['observations']
+                prices = replay_data.pred_obs
                 prediction = self.dynamics_model(prices)
 
                 assert prices.shape[-1] == self.dynamics_model.feature_size
                 assert prediction.shape[-1] == self.dynamics_model.feature_size
 
-                target = pred_data['targets']
+                target = replay_data.target_pred_obs
 
                 self.dynamics_model.optimizer.zero_grad()
                 model_loss = self.dynamics_model.loss(prediction, target)
                 model_loss.backward()
                 self.dynamics_model.optimizer.step()
 
-
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
                 # Compute actor loss
-                
-                next_prediction = self.dynamics_model()
+                with th.no_grad():
+                    next_prediction = self.dynamics_model(next_prices)
                 x = th.cat((next_obs, next_prediction.flatten(1)), 1).squeeze()
 
                 actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(x)).mean()
@@ -431,7 +429,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         """
         This overwrites the predict implementation for stable_baslines3 algorithms in BaseAlgorithms
 
-        :param observation: the input observation
+        :param observation: the input observation must be as (batch, features)
         :param state: The last hidden states (can be None, used in recurrent policies)
         :param episode_start: The last masks (can be None, used in recurrent policies)
             this correspond to beginning of episodes,
@@ -444,24 +442,28 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             print('obs is dict',observation.keys())
 
         prices = self.get_prices(observation)
-
-        self.timestep_buffer.add(prices)
-        sequence = self.timestep_buffer.get_batch()
-        prices = th.tensor(sequence, dtype=th.float32).to(self.device)
+        self.window_buffer.add(prices)
+        sequence = self.window_buffer.get_as_batch() 
+        # if the buffer isn't full we will just get 0s.
         
-        pred = self.dynamics_model(prices)
+        prices = th.tensor(sequence, dtype=th.float32).to(self.device)
+        x = prices.flatten(1)  # add batch dimension
+        pred = self.dynamics_model(x).flatten(1)
         
         assert not isinstance(observation, dict), 'breakpoint for when observation in predict is dict, i dont think it should be a dict for finrl stockenvs'
-        pred = pred.flatten(1)
+        # pred = pred.flatten(1)
+        # 
+        # 
         pred = pred.detach().numpy()
-        observation = np.concatenate((th.tensor(observation), pred), axis=1).squeeze()
+        x = np.concatenate((th.tensor(observation), pred), axis=1)
 
-        a, b = self.policy.predict(observation, None, None, deterministic)
+        # x = th.cat((observation, pred.flatten(1)), 1).squeeze()
+        a, b = self.policy.predict(x, None, None, deterministic)
 
         if len(a.shape) == 1:
             a = np.reshape(a, (1, a.shape[0]))
 
-        return a,b
+        return a, b
 
     def _setup_model(self) -> None:
         '''This is overwritten to redefine the policy's input space'''
@@ -490,12 +492,16 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             self.replay_buffer = self.replay_buffer_class(
                 self.buffer_size,
                 self.observation_space,
+                self.dynamics_model.feature_size,
                 self.action_space,
                 device=self.device,
                 n_envs=self.n_envs,
                 optimize_memory_usage=self.optimize_memory_usage,
                 **replay_buffer_kwargs,
             )
+        
+        self.learning_starts = max(self.learning_starts, self.replay_buffer.window)
+
         self.policy = self.policy_class(
             self.actor_observation_space,
             self.critic_observation_space,
@@ -507,4 +513,12 @@ class ModelBasedTD3(OffPolicyAlgorithm):
 
         # Convert train freq parameter to TrainFreq object
         self._convert_train_freq()
+
+        self._create_aliases()
+        # Running mean and running var
+        self.actor_batch_norm_stats = get_parameters_by_name(self.actor, ["running_"])
+        self.critic_batch_norm_stats = get_parameters_by_name(self.critic, ["running_"])
+        self.actor_batch_norm_stats_target = get_parameters_by_name(self.actor_target, ["running_"])
+        self.critic_batch_norm_stats_target = get_parameters_by_name(self.critic_target, ["running_"])
+
 

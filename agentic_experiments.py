@@ -133,6 +133,7 @@ def train_agent(agent_n, data, model_kwargs, indicators = [], dataset_name = 'n/
             policy="ModelBasedMLP",
             env=env_train,
             dynamics_model=dynamics_model,
+            learning_starts = 150,
             tensorboard_log=None,
             verbose=1,
             policy_kwargs=None,
@@ -257,6 +258,9 @@ if __name__ == '__main__':
     all_trials = {}
 
     # finrl_baseline = ['ddpg','ppo','td3']
+
+    print(f'Running experiments for agents {agents} on datasets {all_tickers.keys()} with indicators {indicators} \n')
+
     values = {}
     for trial in range(1, n_trials+1):
         results = {}
