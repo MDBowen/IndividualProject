@@ -115,11 +115,11 @@ class Exp_Main(Exp_Basic):
         self.model.train()
         return total_loss
 
-    def train(self, setting):
+    def train(self, setting, train_loader=None, vali_loader=None, test_loader=None):
         setting = str(self.args.model)+'_' + setting
-        train_data, train_loader = self._get_data(flag='train')
-        vali_data, vali_loader = self._get_data(flag='val')
-        test_data, test_loader = self._get_data(flag='test')
+        train_data, train_loader = self._get_data(flag='train') if train_loader is None else (None, train_loader)
+        vali_data, vali_loader = self._get_data(flag='val') if vali_loader is None else (None, vali_loader)
+        test_data, test_loader = self._get_data(flag='test') if test_loader is None else (None, test_loader)
 
         self.scaler = train_data.scaler
 
@@ -135,7 +135,6 @@ class Exp_Main(Exp_Basic):
                 return
             except:
                 print('Model couldnt be loaded, training instead')
-
 
         time_now = time.time()
 
@@ -165,7 +164,6 @@ class Exp_Main(Exp_Basic):
                 iter_count += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
-
                 batch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)

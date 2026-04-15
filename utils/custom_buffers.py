@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import pandas as pd
 
 import warnings
 from abc import ABC, abstractmethod
@@ -27,15 +28,15 @@ except ImportError:
     psutil = None
 
 from stable_baselines3.common.buffers import BaseBuffer
+from utils.timefeatures import time_features
 
 
 class ModelBasedSample(NamedTuple):
     observations: th.Tensor
     actions: th.Tensor
     next_observations: th.Tensor
-    pred_obs: th.Tensor
-    next_pred_obs: th.Tensor
-    target_pred_obs: th.Tensor
+    pred_observations: tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]
+    next_pred_observations: tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]
     dones: th.Tensor
     rewards: th.Tensor
     # For n-step replay buffer
@@ -105,6 +106,7 @@ class SequenceReplayBuffer:
 class CustomReplayBuffer(BaseBuffer):
     """
     Replay buffer used in off-policy algorithms like SAC/TD3.
+    However this is modified for a transformer-model-based algorithms
 
     :param buffer_size: Max number of element in the buffer
     :param observation_space: Observation space
@@ -143,7 +145,9 @@ class CustomReplayBuffer(BaseBuffer):
         handle_timeout_termination: bool = True,
         batch_size: int = 100,
         prediction_window: int = 96,
+        label_len: int = 48,
         prediction_horizon: int = 24,
+        dynamic_model_freq: str = 'D'
     ):
         super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
 
@@ -165,15 +169,19 @@ class CustomReplayBuffer(BaseBuffer):
 
         self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
         self.pred_observations = np.zeros((self.buffer_size, self.n_envs, price_dim), dtype = observation_space.dtype)
+        self.dates = np.zeros((self.buffer_size, self.n_envs), dtype=object)
         self.batch_size = batch_size
         self.seq_len = prediction_window
+        self.label_len = label_len
         self.pred_len = prediction_horizon
         self.window = self.seq_len + self.pred_len
+        self.freq = dynamic_model_freq
 
         if not optimize_memory_usage:
             # When optimizing memory, `observations` contains also the next observation
             self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
             self.next_pred_observations = np.zeros((self.buffer_size, self.n_envs, price_dim), dtype=observation_space.dtype)
+            self.next_dates = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
 
         self.actions = np.zeros(
             (self.buffer_size, self.n_envs, self.action_dim), dtype=self._maybe_cast_dtype(action_space.dtype)
@@ -213,6 +221,7 @@ class CustomReplayBuffer(BaseBuffer):
         reward: np.ndarray,
         done: np.ndarray,
         infos: list[dict[str, Any]],
+        dates: list[float] | None = None,
     ) -> None:
         # Reshape needed when using multiple envs with discrete observations
         # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
@@ -231,9 +240,12 @@ class CustomReplayBuffer(BaseBuffer):
         else:
             self.next_observations[self.pos] = np.array(next_obs)
 
+        # assert dates is not None, 'dates need to be passed in for the add function of model based td3'
+
         self.actions[self.pos] = np.array(action)
         self.rewards[self.pos] = np.array(reward)
         self.dones[self.pos] = np.array(done)
+        self.dates[self.pos] =dates
 
         if self.handle_timeout_termination:
             self.timeouts[self.pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
@@ -257,17 +269,15 @@ class CustomReplayBuffer(BaseBuffer):
         """
         if not self.optimize_memory_usage:
             # return super().sample(batch_size=batch_size, env=env)
-
             upper_bound = self.buffer_size if self.full else self.pos
             batch_inds = np.random.randint(self.window, upper_bound, size=batch_size)
-
 
         # Do not sample the element with index `self.pos` as the transitions is invalid
         # (we use only one array to store `obs` and `next_obs`)
         if self.full:
             batch_inds = (np.random.randint(self.window, self.buffer_size, size=batch_size) + self.pos) % self.buffer_size
         else:
-            batch_inds = np.random.randint(self.window, self.pos, size=batch_size)
+            batch_inds = np.random.randint(self.window, self.pos - self.pred_len - 1 , size=batch_size)
         return self._get_samples(batch_inds, env=env)
 
     def _get_samples(self, batch_inds: np.ndarray, env: VecNormalize | None = None) -> ModelBasedSample:
@@ -279,39 +289,87 @@ class CustomReplayBuffer(BaseBuffer):
         else:
             next_obs = self._normalize_obs(self.next_observations[batch_inds, env_indices, :], env)
 
-        obs_seq = self._normalize_obs( np.stack([
-            self.observations[i - self.window : i - self.pred_len, env_indices[j]]  for j, i in enumerate(batch_inds)
+        x_batch_dates =[
+            self.dates[i - self.seq_len : i, env_indices[j]]  for j, i in enumerate(batch_inds)
+            ]
+        y_batch_dates = [
+            self.dates[i - self.label_len : i + self.pred_len, env_indices[j]]  for j, i in enumerate(batch_inds)
+            ]
+        
+        next_x_dates = [ 
+            self.dates[i - self.seq_len + 1 : i + 1, env_indices[j]]  for j, i in enumerate(batch_inds)
+            ] 
+
+        next_y_dates = [
+            self.dates[i - self.label_len + 1: i + self.pred_len + 1 , env_indices[j]]  for j, i in enumerate(batch_inds)
+            ]
+
+        x_mark_batch = [time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0) for x_dates in x_batch_dates]
+        y_mark_batch = [time_features(pd.to_datetime(y_dates), freq=self.freq).transpose(1, 0) for y_dates in y_batch_dates]
+        next_x_mark_batch = [time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0) for x_dates in next_x_dates]
+        next_y_mark_batch = [time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0) for x_dates in next_y_dates]
+
+        
+        x = self._normalize_obs( np.stack([
+            self.observations[i - self.seq_len : i, env_indices[j]]  for j, i in enumerate(batch_inds)
             ]), env)
-        target_seq = self._normalize_obs( np.stack([
-            self.next_observations[i - self.pred_len : i, env_indices[j]]  for j, i in enumerate(batch_inds)
+        y = self._normalize_obs( np.stack([
+            self.observations[i - self.label_len : i + self.pred_len, env_indices[j]]  for j, i in enumerate(batch_inds)
             ]), env)
-        next_obs_seq = self._normalize_obs( np.stack([
-            self.next_observations[i - self.window : i - self.pred_len, env_indices[j]]  for j, i in enumerate(batch_inds)
+        next_x = self._normalize_obs( np.stack([
+            self.next_observations[i - self.seq_len : i, env_indices[j]]  for j, i in enumerate(batch_inds)
+            ]), env)
+
+        next_y = self._normalize_obs( np.stack([
+            self.next_observations[i - self.label_len : i + self.pred_len, env_indices[j]]  for j, i in enumerate(batch_inds)
             ]), env)
 
         reshape = lambda x: x[:, :, 1:1+self.price_dims]
-        for arr in [obs_seq, target_seq, next_obs_seq]:
+        for arr in [x, y, next_x, next_y]:
             arr = reshape(arr)
 
-        obs_seq, target_seq, next_obs_seq = tuple(map(reshape, [obs_seq, target_seq, next_obs_seq]))
+        x, y, next_x, next_y = tuple(map(reshape, [x, y, next_x, next_y]))
 
-        assert obs_seq.shape == (len(batch_inds), self.seq_len, self.price_dims), f'obs_seq wrong shape is {obs_seq.shape} should be {(len(batch_inds), self.seq_len, self.price_dims)}'
-        assert target_seq.shape == (len(batch_inds), self.pred_len, self.price_dims),  f'target_seq wrong shape is {target_seq.shape} should be {(len(batch_inds), self.pred_len, self.price_dims)}'
-        assert next_obs_seq.shape == (len(batch_inds), self.seq_len, self.price_dims), f'next_obs_seq wrong shape is {next_obs_seq.shape} should be {(len(batch_inds), self.seq_len, self.price_dims)}'
+        pred_x = th.Tensor(x)
+        pred_y = th.Tensor(y)
+        next_pred_x = th.Tensor(next_x)
+        next_pred_y = th.Tensor(next_y)
+        x_mark_batch = np.array(x_mark_batch)
+        y_mark_batch = np.array(y_mark_batch)
+        next_x_mark_batch = np.array(next_x_mark_batch)
+        next_y_mark_batch = np.array(next_y_mark_batch)
+        pred_x_mark = th.Tensor(x_mark_batch)
+        pred_y_mark = th.Tensor(y_mark_batch)
+        next_pred_x_mark = th.Tensor(next_x_mark_batch)
+        next_pred_y_mark = th.Tensor(next_y_mark_batch)
+
+        pred_x      = pred_x.reshape(len(batch_inds), self.seq_len, self.price_dims)
+        pred_y      = pred_y.reshape(len(batch_inds), self.label_len + self.pred_len, self.price_dims)
+        pred_x_mark = pred_x_mark.reshape(len(batch_inds), self.seq_len, x_mark_batch.shape[-1])
+        pred_y_mark = pred_y_mark.reshape(len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1])
+        next_pred_x = next_pred_x.reshape(len(batch_inds), self.seq_len, self.price_dims)
+        next_pred_y = next_pred_y.reshape(len(batch_inds), self.label_len + self.pred_len, self.price_dims)
+        next_pred_x_mark = next_pred_x_mark.reshape(len(batch_inds), self.seq_len, x_mark_batch.shape[-1])
+        next_pred_y_mark = next_pred_y_mark.reshape(len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1])
+
+
+        assert pred_x.shape == (len(batch_inds), self.seq_len, self.price_dims), f'obs_seq wrong shape is {obs_seq.shape} should be {(len(batch_inds), self.seq_len, self.price_dims)}'
+        assert pred_y.shape == (len(batch_inds), self.label_len + self.pred_len, self.price_dims),  f'target_seq wrong shape is {target_seq.shape} should be {(len(batch_inds), self.label_len + self.pred_len, self.price_dims)}'
+        assert pred_x_mark.shape == (len(batch_inds), self.seq_len, x_mark_batch.shape[-1]), f'x_mark_batch wrong shape is {x_mark_batch.shape} should be {(len(batch_inds), self.seq_len, x_mark_batch.shape[-1])}'
+        assert pred_y_mark.shape == (len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1]), f'y_mark_batch wrong shape is {y_mark_batch.shape} should be {(len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1])}'
 
         data = (
-            self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
-            self.actions[batch_inds, env_indices, :],
-            next_obs,
-            obs_seq,
-            next_obs_seq,
-            target_seq,
+            th.Tensor(self._normalize_obs(self.observations[batch_inds, env_indices, :], env)),
+            th.Tensor(self.actions[batch_inds, env_indices, :]),
+            th.Tensor(next_obs),
+            (pred_x, pred_y, pred_x_mark, pred_y_mark),
+            (next_pred_x, next_pred_y, next_pred_x_mark, next_pred_y_mark),
             # Only use dones that are not due to timeouts
             # deactivated by default (timeouts is initialized as an array of False)
-            (self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1),
-            self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env),
+            th.Tensor((self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1)),
+            th.Tensor(self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env)),
         )
-        return ModelBasedSample(*tuple(map(self.to_torch, data)))
+        return ModelBasedSample(*data)
 
     @staticmethod
     def _maybe_cast_dtype(dtype: np.typing.DTypeLike | None) -> np.typing.DTypeLike | None:

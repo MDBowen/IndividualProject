@@ -82,7 +82,7 @@ class Autoformer_Buffer:
         dec_inp = torch.cat([y_label, dec_inp], dim = 0).float().to(device)
 
         x = x.reshape(self.seq_len, self.feature_size)
-        dec_inp = dec_inp.reshape(self.label_len + self.pred_len, self.feature_size)
+        dec_inp = dec_inp.reshape(1, self.label_len + self.pred_len, self.feature_size)
         x_mark = x_mark.reshape(1, self.seq_len, x_mark.shape[-1])
         y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1])
 
