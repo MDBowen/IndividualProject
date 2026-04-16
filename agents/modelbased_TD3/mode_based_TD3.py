@@ -1,3 +1,5 @@
+from curses import window
+
 import pandas as pd
 from typing import Any, ClassVar, TypeVar
 import numpy as np
@@ -34,10 +36,9 @@ from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
 from utils.timefeatures import time_features
 
-
 SelfTD3 = TypeVar("SelfTD3", bound="ModelBasedTD3")
 
-from utils.custom_buffers import SequenceReplayBuffer, CustomReplayBuffer
+from utils.custom_buffers import Autoformer_Buffer, CustomReplayBuffer
 from agents.modelbased_TD3.policies import ModelBasedTD3Policy
 
 class TimestepBuffer:
@@ -61,72 +62,6 @@ class TimestepBuffer:
     def get_as_batch(self):
         return np.stack(list(self.buffer))[np.newaxis, :]  # (1, seq_len, n_features)
 
-class Autoformer_Buffer:
-    def __init__(self,  max_size, feature_size, seq_len, pred_len, label_len, freq = 'D'):
-        self.prices = deque(maxlen=max_size)
-        self.dates = deque(maxlen=max_size)
-        self.seq_len = seq_len
-        self.feature_size = feature_size
-        self.pred_len = pred_len
-        self.max_size = max_size
-        self.label_len =  label_len
-        self.freq = freq
-        self.reset()
-        
-    def reset(self):
-        self.prices.clear()
-        self.dates.clear()
-
-        for _ in range(self.max_size):
-            self.prices.append(np.zeros(self.feature_size, dtype=np.float32))
-            self.dates.append('1970-01-01')
-
-    def add(self, x, date):
-
-        assert isinstance(x, np.ndarray) and x.shape[0] == self.feature_size, f'input x needs to be a numpy array of shape (feature_size,) is instead {x}'
-
-        self.prices.append(x)
-        self.dates.append(date)
-
-    def get_all(self):
-        return list(self.prices), list(self.dates)
-    
-    def get_size(self):
-        return len(list(self.prices))
-
-    def get_last(self, device = 'cpu'):
-
-        x = list(self.prices)[-self.seq_len:]
-        y_label = list(self.prices)[-self.label_len:]
-
-        x_dates = list(self.dates)[-self.seq_len:]
-        y_dates = list(self.dates)[-self.label_len:]
-
-        pred_dates = pd.date_range(y_dates[-1], periods=self.pred_len + 1, freq=self.freq)
-
-        y_stamp = y_dates + list(pred_dates)[1:]
-        
-        x_mark = time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0)
-        y_mark = time_features(pd.to_datetime(y_stamp), freq=self.freq).transpose(1, 0)
-
-        x = th.Tensor(x)
-        y_label = th.Tensor(y_label)
-        x_mark = th.Tensor(x_mark)
-        y_mark = th.Tensor(y_mark)
-
-        dec_inp = th.zeros(( self.pred_len, self.feature_size)).float()
-        dec_inp = th.cat([y_label, dec_inp], dim = 0).float().to(device)
-
-        x = x.reshape(1, self.seq_len, self.feature_size).float()
-        dec_inp = dec_inp.reshape(1, self.label_len + self.pred_len, self.feature_size).float()
-        x_mark = x_mark.reshape(1, self.seq_len, x_mark.shape[-1]).float()
-        y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1]).float()
-        # y_label = x[:, -self.label_len:, :]
-
-        # dec_inp = th.zeros((1, self.pred_len, self.feature_size))
-        # dec_inp = th.cat([y_label, dec_inp], dim = 1).float()
-
-        return x, dec_inp, x_mark, y_mark
 
     
     
@@ -221,7 +156,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         stats_window_size: int = 100,
         tensorboard_log: str | None = None,
         policy_kwargs: dict[str, Any] | None = None,
-        verbose: int = 0,
+        verbose: int = 1,
         seed: int | None = None,
         device: th.device | str = "auto",
         _init_setup_model: bool = True,
@@ -267,8 +202,13 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         self.actor_observation_space = self.policy_observation_space
         self.critic_observation_space = self.observation_space
         self.dynamics_model = dynamics_model
-        self.train_dynamics_model = True
-        self.window_buffer = Autoformer_Buffer(max_size=100_000, feature_size=feature_dim, seq_len=dynamics_seq_len, pred_len=dynamics_pred_len, label_len=dynamics_model.args.label_len, freq = self.dynamics_model.args.freq)
+        self.train_dynamics_model = False
+        self.window_buffer = Autoformer_Buffer(max_size=100_000, 
+                                               feature_size=feature_dim, 
+                                               seq_len=dynamics_seq_len, 
+                                               pred_len=dynamics_pred_len, 
+                                               label_len=dynamics_model.args.label_len,
+                                               freq = self.dynamics_model.args.freq)
         self.policy_delay = policy_delay
         self.target_noise_clip = target_noise_clip
         self.target_policy_noise = target_policy_noise
@@ -411,7 +351,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
                 next_obs = replay_data.next_observations
 
                 x, y, x_mark, y_mark = replay_data.next_pred_observations
-                pred, _ = self.dynamics_model._predict(x, y, x_mark, y_mark)
+                pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
 
                 x = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
                 assert x.shape[0] == next_obs.shape[0], f'Shapes wrong next_obs: {next_obs.shape}, pred: {pred.flatten(1).shape}, x: {x.shape}' 
@@ -445,7 +385,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
                 # Compute actor loss
                 with th.no_grad():
                     x, y, x_mark, y_mark = replay_data.pred_observations
-                    pred, _ = self.dynamics_model._predict(x, y, x_mark, y_mark)
+                    pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
 
                     x = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
 
@@ -466,7 +406,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             # Optimize dynamics model if configured so
             if self.train_dynamics_model:
                 x, y, x_mark, y_mark = replay_data.pred_observations
-                pred, y = self.dynamics_model._predict(x, y, x_mark, y_mark)
+                pred, y = self._dynamics_model_predict(x, y, x_mark, y_mark, scale=False)
                 
                 pred = pred
                 true = y
@@ -484,7 +424,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         total_timesteps: int,
         callback: MaybeCallback = None,
         log_interval: int = 4,
-        tb_log_name: str = "TD3",
+        tb_log_name: str = "mb_TD3",
         reset_num_timesteps: bool = True,
         progress_bar: bool = False,
     ) -> SelfTD3:
@@ -504,6 +444,28 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         state_dicts = ["policy", "actor.optimizer", "critic.optimizer"]
         return state_dicts, []
     
+    def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale = True):
+        reshape_and_scale = lambda transform, _x, shape: th.Tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().numpy())).reshape(shape[0], shape[1], shape[2]).to(_x.device)
+
+        if self.dynamics_model.args.scale and scale:
+
+            batches = x.shape[0]
+            window_x = x.shape[1]
+            window_y = y.shape[1]
+            feature_dim_x = x.shape[2]
+            feature_dim_y = y.shape[2]
+
+            x = reshape_and_scale(self.dynamics_model.scaler.transform, x, (batches, window_x, feature_dim_x))
+            y = reshape_and_scale(self.dynamics_model.scaler.transform, y, (batches, window_y, feature_dim_y))
+
+        pred, y = self.dynamics_model._predict(x, y, x_mark, y_mark)
+
+        if self.dynamics_model.args.scale and scale:
+            pred = reshape_and_scale(self.dynamics_model.scaler.inverse_transform, pred, pred.shape)
+
+        return pred, y
+
+    
     def _get_prediction(self, x, date):
         ''''x needs to be the prices in obs
             date needs to be the date from the env
@@ -513,7 +475,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         assert len(x.shape) == 1, f'x needs to be 1d array of prices, got {x.shape}'
         self.window_buffer.add(x, date) 
         x, y, x_mark, y_mark = self.window_buffer.get_last(device = self.device)
-        pred, _ = self.dynamics_model._predict(x, y, x_mark, y_mark)
+        pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
         return pred.detach()
 
     def predict(

@@ -346,7 +346,3 @@ all_tickers = {
     "nasdaq100": nasdaq100_tickers,
     "csi100":   csi100_tickers,
 }
-
-print(f"\nAll indices loaded:")
-for name, tickers in all_tickers.items():
-    print(f"  {name}: {len(tickers)} tickers")

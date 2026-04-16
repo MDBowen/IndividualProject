@@ -62,13 +62,13 @@ def plot_values(value_dict):
     
     
 
-def get_data(test_start, test_end, train_end, tickers, indicators = None, data_path = 'data/datasets'):
+def get_data(train_start, train_end, test_end, tickers, indicators = None, data_path = 'data/datasets'):
 
     test_sets = {}
     train_sets = {}
     for tic in tickers.keys():
 
-        downloader = TestYahooDownloader(test_start, train_end, tickers[tic])
+        downloader = TestYahooDownloader(train_start, test_end, tickers[tic])
         df = downloader.fetch_data()
         os.makedirs(data_path, exist_ok = True)
 
@@ -82,8 +82,8 @@ def get_data(test_start, test_end, train_end, tickers, indicators = None, data_p
 
         df = fe.preprocess_data(df)
 
-        train_data = data_split(df, test_start, test_end)
-        df = data_split(df, test_end, train_end)
+        train_data = data_split(df, train_start, train_end)
+        df = data_split(df, train_end, test_end)
 
         downloader.save_as_csv(os.path.join(data_path, tic + '.csv' ), data = train_data)
 

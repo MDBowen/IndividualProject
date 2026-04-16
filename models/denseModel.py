@@ -61,6 +61,12 @@ class DenseModel(torch.nn.Module):
 
         return y.reshape((x.shape[0], self.pred_len, self.feature_size))
     
+    def _select_optimizer(self):
+        return torch.optim.Adam(self.model.parameters(), lr=0.001)
+
+    def _select_criterion(self):
+        return torch.nn.MSELoss()
+    
     def _predict(self, x, y, x_m, y_m):
         self.model.eval()
         with torch.no_grad():

@@ -3,7 +3,7 @@ from utils.tools import dotdict
 import torch
 from exp.exp_main import Exp_Main
 
-def create_config(model, feature_dim, seq_len=96, pred_len=24, label_len=48):
+def create_config(model, feature_dim, seq_len=96, pred_len=24, label_len=48, epochs=10, batch_size=32, learning_rate=0.0001):
 
     
     args = dotdict()
@@ -44,16 +44,16 @@ def create_config(model, feature_dim, seq_len=96, pred_len=24, label_len=48):
     
     args.num_workers = 1 
     args.itr = None 
-    args.train_epochs = 10
-    args.batch_size = 32
+    args.train_epochs = epochs
+    args.batch_size = batch_size
     args.patience = 3 
-    args.learning_rate = 0.0001
+    args.learning_rate = learning_rate # default is 0.0001
     args.des = 'train'
     args.loss = 'mse'
     args.lradj = 'type1'
     args.use_amp = False 
 
-    args.use_gpu = False
+    args.use_gpu = torch.cuda.is_available()
     args.gpu = 0 if args.use_gpu else None
     args.use_multi_gpu = False
     args.devices = None  
@@ -90,8 +90,11 @@ def get_model(**kwargs):
     seq_len = kwargs.get('seq_len', 96)
     pred_len = kwargs.get('pred_len', 24)
     label_len = kwargs.get('label_len', 48)
+    epochs = kwargs.get('epochs', 10)
+    batch_size = kwargs.get('batch_size', 32)
+    learning_rate = kwargs.get('learning_rate', 0.0001)
     
-    args, setting = create_config(model_name, feature_dim, seq_len, pred_len, label_len)
+    args, setting = create_config(model_name, feature_dim, seq_len, pred_len, label_len, epochs, batch_size, learning_rate)
 
     if feature_dim is None:
         raise ValueError('feature_dim must be provided in model_kwargs')

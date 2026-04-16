@@ -4,6 +4,7 @@ Yahoo Finance API
 
 from __future__ import annotations
 
+import hashlib
 import pandas as pd
 import yfinance as yf
 import os
@@ -35,10 +36,21 @@ class TestYahooDownloader:
 
         self.data_df = None
 
-    def fetch_data(self, proxy=None, auto_adjust=False) -> pd.DataFrame:
-        """Fetches data from Yahoo API
+    def _cache_path(self, cache_dir: str) -> str:
+        ticker_hash = hashlib.md5(",".join(sorted(self.ticker_list)).encode()).hexdigest()[:8]
+        filename = f"{self.start_date}_{self.end_date}_{ticker_hash}.csv"
+        return os.path.join(cache_dir, filename)
+
+    def fetch_data(self, proxy=None, auto_adjust=False, cache_dir: str | None = None) -> pd.DataFrame:
+        """Fetches data from Yahoo API, returning a cached CSV if one exists for the
+        same date range and ticker list.
+
         Parameters
         ----------
+        cache_dir : str, optional
+            Directory to read/write cached CSVs. Cache filenames encode the date
+            range and an 8-char hash of the sorted ticker list so different
+            configurations never collide.
 
         Returns
         -------
@@ -46,6 +58,13 @@ class TestYahooDownloader:
             7 columns: A date, open, high, low, close, volume and tick symbol
             for the specified stock ticker
         """
+        if cache_dir is not None:
+            cache_file = self._cache_path(cache_dir)
+            if os.path.exists(cache_file):
+                print(f"Loading cached data from {cache_file}")
+                self.data_df = pd.read_csv(cache_file, index_col=0, parse_dates=["date"])
+                self.data_df["date"] = self.data_df["date"].dt.strftime("%Y-%m-%d")
+                return self.data_df
         # Download and save the data in a pandas DataFrame:
         data_df = pd.DataFrame()
         num_failures = 0
@@ -108,6 +127,12 @@ class TestYahooDownloader:
         # ENV uses day to find days, so all indecies of the same day need same
 
         self.data_df = data_df
+
+        if cache_dir is not None:
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_file = self._cache_path(cache_dir)
+            data_df.to_csv(cache_file)
+            print(f"Cached data saved to {cache_file}")
 
         return data_df
 

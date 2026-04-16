@@ -42,6 +42,71 @@ class ModelBasedSample(NamedTuple):
     # For n-step replay buffer
     discounts: th.Tensor | None = None
 
+
+class Autoformer_Buffer:
+    def __init__(self,  max_size, feature_size, seq_len, pred_len, label_len, freq = 'D'):
+        self.prices = deque(maxlen=max_size)
+        self.dates = deque(maxlen=max_size)
+        self.seq_len = seq_len
+        self.feature_size = feature_size
+        self.pred_len = pred_len
+        self.max_size = max_size
+        self.label_len =  label_len
+        self.freq = freq
+        self.reset()
+        
+    def reset(self):
+        self.prices.clear()
+        self.dates.clear()
+
+        for _ in range(self.max_size):
+            self.prices.append(np.zeros(self.feature_size, dtype=np.float32))
+            self.dates.append('0000-00-00')
+
+    def add(self, x, date):
+
+        assert isinstance(x, np.ndarray) and x.shape[0] == self.feature_size, f'input x needs to be a numpy array of shape (feature_size,) is instead {x}'
+
+        self.prices.append(x)
+        self.dates.append(date)
+
+    def get_all(self):
+        return list(self.prices), list(self.dates)
+    
+    def get_size(self):
+        return len(list(self.prices))
+
+    def get_last(self, device = 'cpu'):
+
+        x = list(self.prices)[-self.seq_len:]
+        y_label = list(self.prices)[-self.label_len:]
+
+        x_dates = list(self.dates)[-self.seq_len:]
+        y_dates = list(self.dates)[-self.label_len:]
+
+        pred_dates = pd.date_range(y_dates[-1], periods=self.pred_len + 1, freq=self.freq)
+
+        y_stamp = y_dates + list(pred_dates)[1:]
+        
+        x_mark = time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0)
+        y_mark = time_features(pd.to_datetime(y_stamp), freq=self.freq).transpose(1, 0)
+
+        x = th.Tensor(x)
+        y_label = th.Tensor(y_label)
+        x_mark = th.Tensor(x_mark)
+        y_mark = th.Tensor(y_mark)
+
+        dec_inp = th.zeros(( self.pred_len, self.feature_size)).float()
+        dec_inp = th.cat([y_label, dec_inp], dim = 0).float().to(device)
+
+        x = x.reshape(1, self.seq_len, self.feature_size).float()
+        dec_inp = dec_inp.reshape(1, self.label_len + self.pred_len, self.feature_size).float()
+        x_mark = x_mark.reshape(1, self.seq_len, x_mark.shape[-1]).float()
+        y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1]).float()
+        
+        return x, dec_inp, x_mark, y_mark
+
+
 class SequenceReplayBuffer:
     def __init__(self, buffer_size, seq_len, pred_len, n_features, n_actions, device="cpu"):
         self.buffer_size = buffer_size
@@ -351,12 +416,6 @@ class CustomReplayBuffer(BaseBuffer):
         next_pred_y = next_pred_y.reshape(len(batch_inds), self.label_len + self.pred_len, self.price_dims)
         next_pred_x_mark = next_pred_x_mark.reshape(len(batch_inds), self.seq_len, x_mark_batch.shape[-1])
         next_pred_y_mark = next_pred_y_mark.reshape(len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1])
-
-
-        assert pred_x.shape == (len(batch_inds), self.seq_len, self.price_dims), f'obs_seq wrong shape is {obs_seq.shape} should be {(len(batch_inds), self.seq_len, self.price_dims)}'
-        assert pred_y.shape == (len(batch_inds), self.label_len + self.pred_len, self.price_dims),  f'target_seq wrong shape is {target_seq.shape} should be {(len(batch_inds), self.label_len + self.pred_len, self.price_dims)}'
-        assert pred_x_mark.shape == (len(batch_inds), self.seq_len, x_mark_batch.shape[-1]), f'x_mark_batch wrong shape is {x_mark_batch.shape} should be {(len(batch_inds), self.seq_len, x_mark_batch.shape[-1])}'
-        assert pred_y_mark.shape == (len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1]), f'y_mark_batch wrong shape is {y_mark_batch.shape} should be {(len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1])}'
 
         data = (
             th.Tensor(self._normalize_obs(self.observations[batch_inds, env_indices, :], env)),
