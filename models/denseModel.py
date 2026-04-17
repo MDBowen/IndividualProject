@@ -2,6 +2,7 @@
 import torch
 import numpy as np
 import time
+from torch import optim
 
 from sklearn.preprocessing import StandardScaler
 
@@ -19,7 +20,9 @@ class DenseModel(torch.nn.Module):
         self.feature_size = args.enc_in
         self.batch_size = args.batch 
         self.seq_len = args.seq_len
-
+        self.args = args
+        self.device = 'cuda' if args.use_gpu else 'cpu'
+        self.device = torch.device(self.device)
         self.input_shape = (self.seq_len, self.feature_size)
 
         if hidden_layer_sizes is None:
@@ -54,6 +57,14 @@ class DenseModel(torch.nn.Module):
 
         self.scaler = StandardScaler()
 
+    def _select_optimizer(self):
+        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        return model_optim
+
+    def _select_criterion(self):
+        criterion = nn.MSELoss()
+        return criterion
+
     def forward(self, x):
         y = self.model(x)
         if len(x.shape)<3:
@@ -68,11 +79,19 @@ class DenseModel(torch.nn.Module):
         return torch.nn.MSELoss()
     
     def _predict(self, x, y, x_m, y_m):
-        self.model.eval()
+        
+        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+        dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+
         with torch.no_grad():
             pred = self.forward(x)
 
-        return pred, None
+        f_dim = -1 if self.args.features == 'MS' else 0
+        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+
+
+        return pred, y 
 
     def save_params(self, name= None, filepath = None):
         if filepath is None:

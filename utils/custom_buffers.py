@@ -1,24 +1,19 @@
 import numpy as np
 import torch
 import pandas as pd
+from collections import deque
 
 import warnings
-from abc import ABC, abstractmethod
-from collections.abc import Generator
 from typing import Any, NamedTuple
 
 import numpy as np
 import torch as th
 from gymnasium import spaces
 
-from stable_baselines3.common.preprocessing import get_action_dim, get_obs_shape
 from stable_baselines3.common.type_aliases import (
-    DictReplayBufferSamples,
-    DictRolloutBufferSamples,
     ReplayBufferSamples,
-    RolloutBufferSamples,
 )
-from stable_baselines3.common.utils import get_device
+
 from stable_baselines3.common.vec_env import VecNormalize
 
 try:
@@ -61,7 +56,7 @@ class Autoformer_Buffer:
 
         for _ in range(self.max_size):
             self.prices.append(np.zeros(self.feature_size, dtype=np.float32))
-            self.dates.append('0000-00-00')
+            self.dates.append('1900-01-01')
 
     def add(self, x, date):
 

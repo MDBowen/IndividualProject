@@ -3,8 +3,6 @@ from curses import window
 import pandas as pd
 from typing import Any, ClassVar, TypeVar
 import numpy as np
-from collections import deque
-from sympy import sequence
 import torch as th
 from gymnasium import spaces
 from torch.nn import functional as F
@@ -14,57 +12,19 @@ from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.policies import BasePolicy, ContinuousCritic
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
+from stable_baselines3.common.type_aliases import MaybeCallback, Schedule
 from stable_baselines3.common.utils import get_parameters_by_name, polyak_update
 from stable_baselines3.td3.policies import Actor, CnnPolicy, MlpPolicy, MultiInputPolicy, TD3Policy
 from stable_baselines3.common.buffers import DictReplayBuffer, NStepReplayBuffer, ReplayBuffer
 from stable_baselines3.her.her_replay_buffer import HerReplayBuffer
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-
-from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.buffers import DictReplayBuffer, NStepReplayBuffer, ReplayBuffer
-from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
-from stable_baselines3.common.policies import BasePolicy
-from stable_baselines3.common.save_util import load_from_pkl, save_to_pkl
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.utils import safe_mean, should_collect_more_steps
-from stable_baselines3.common.vec_env import VecEnv
-from stable_baselines3.her.her_replay_buffer import HerReplayBuffer
 
 from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
-
-from utils.timefeatures import time_features
 
 SelfTD3 = TypeVar("SelfTD3", bound="ModelBasedTD3")
 
 from utils.custom_buffers import Autoformer_Buffer, CustomReplayBuffer
 from agents.modelbased_TD3.policies import ModelBasedTD3Policy
 
-class TimestepBuffer:
-    def __init__(self, seq_len, n_features):
-        self.seq_len = seq_len
-        self.n_features = n_features
-        self.buffer = deque(maxlen=seq_len)
-        self.reset()
-
-    def reset(self):
-        self.buffer.clear()
-        for _ in range(self.seq_len):
-            self.buffer.append(np.zeros(self.n_features, dtype=np.float32))
-
-    def add(self, obs):
-        self.buffer.append(np.array(obs, dtype=np.float32).flatten()[:self.n_features])
-
-    def get(self):
-        return np.stack(list(self.buffer))  # (seq_len, n_features)
-    
-    def get_as_batch(self):
-        return np.stack(list(self.buffer))[np.newaxis, :]  # (1, seq_len, n_features)
-
-
-    
-    
 class ModelBasedTD3(OffPolicyAlgorithm):
     """
     This is a modification of stable baselines3's TD3 which takes some additional params, including a dynamics prediciton modue

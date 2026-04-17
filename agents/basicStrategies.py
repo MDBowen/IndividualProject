@@ -15,7 +15,7 @@ and returns an action (for sure) and and maybe a state?  '''
 form tuple( [balance]  )'''
 
 class PredictorStrategy():
-    def __init__(self, dynamics_model, scaler, hmax, feature_len, pred_idx = 0, device = 'cpu'):
+    def __init__(self, dynamics_model, hmax, feature_len, scaler = None, pred_idx = 0, device = 'cpu'):
         self.dynamics_model = dynamics_model
         self.scaler = scaler
         self.hmax = hmax
@@ -91,8 +91,8 @@ class PredictorStrategy():
         return pred, y
     
 class BuyAndHold(PredictorStrategy):
-    def __init__(self, dynamics_model, scaler, feature_len):
-        super().__init__(dynamics_model, scaler, feature_len)
+    def __init__(self, dynamics_model, hmax, feature_len, scaler = None, pred_idx = 0, device = 'cpu'):
+        super().__init__(dynamics_model, hmax, feature_len, scaler = scaler, pred_idx = pred_idx, device = device)
         self.inx = 0 
 
     def strategy_func(self, prediciton, price):
@@ -108,8 +108,8 @@ class BuyAndHold(PredictorStrategy):
     
 
 class PredictionSignStrategy(PredictorStrategy):
-    def __init__(self, dynamics_model, scaler, hmax, feature_len):
-        super().__init__(dynamics_model, scaler, hmax, feature_len)
+    def __init__(self, dynamics_model, hmax, feature_len, scaler = None, pred_idx = 0, device = 'cpu'):
+        super().__init__(dynamics_model, hmax, feature_len, scaler = scaler, pred_idx = pred_idx, device = device)
     def strategy_func(self, prediciton, price):
         action = np.sign(prediciton - price)
         return action
