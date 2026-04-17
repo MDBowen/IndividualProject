@@ -14,10 +14,8 @@ from data.test_yahoo_downloader import TestYahooDownloader
 from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 from enviroments.test_env_stocktrading import StockTradingEnv 
 
-from agents.basicStrategies import Buy_And_Hold
+from agents.basicStrategies import BuyAndHold, PredictionSignStrategy
 from models.denseModel import train_dense
-
-from stable_baselines3.common.logger import configure
 
 from finrl.config import TRAINED_MODEL_DIR
 from finrl.agents.stablebaselines3.models import DRLAgent
@@ -30,7 +28,6 @@ check_and_make_directories([TRAINED_MODEL_DIR])
 
 def plot_values(value_dict):
 
-    
     df_dji = TestYahooDownloader(
     start_date=train_end, end_date=test_end, ticker_list = ["^dji"]
     ).fetch_data()
@@ -45,8 +42,6 @@ def plot_values(value_dict):
         right_index=True,
     ).set_index("date")
 
-   
-
     for agent, value in value_dict.items():
         value_dict[agent] =  value.set_index(value.columns[0])['account_value']
 
@@ -60,8 +55,6 @@ def plot_values(value_dict):
     plt.savefig('run_results.png')
     plt.show()
     
-    
-
 def get_data(train_start, train_end, test_end, tickers, indicators = None, data_path = 'data/datasets'):
 
     test_sets = {}

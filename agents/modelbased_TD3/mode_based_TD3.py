@@ -265,8 +265,8 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         We store the normalized action and the unnormalized observation.
         It also handles terminal observations (because VecEnv resets automatically).
 
-        due to how dates are required, this stores the date from the env, 
-        therefore _store_transition needs to be called after step and before resets
+        as dates are required, this stores the date from the env, 
+        therefore ensure _store_transition needs to is called after step and before resets
 
         :param replay_buffer: Replay buffer object where to store the transition.
         :param buffer_action: normalized action

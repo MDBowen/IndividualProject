@@ -20,7 +20,7 @@ from data.test_yahoo_downloader import TestYahooDownloader
 from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 from enviroments.test_env_stocktrading import StockTradingEnv 
 
-from agents.basicStrategies import Buy_And_Hold
+from agents.basicStrategies import BuyAndHold, PredictionSignStrategy
 from models.denseModel import train_dense
 
 from stable_baselines3.common.logger import configure
@@ -34,7 +34,8 @@ from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
 from agents.modelbased_TD3.mode_based_TD3 import ModelBasedTD3
 from utils.custom_callback import CustomCallback
-
+from utils.evaluation import evaluate_model
+from results.plot_results import create_performance_report
 
 predictor_agents = ['dense_predictor', 'autoformer_predictor', 'buy_and_hold']
 model_based_agents = ['dense_td3', 'autoformer_td3']
@@ -110,77 +111,6 @@ def sample_tickers(train_set, val_set, test_set, tickers, assets_per_ep):
     test = test_set[test_set.tic.isin(tics)]
     
     return train, val, test, tics
-
-def run_env_episode(agent, name, training_set, timesteps_per_env, env_kwargs):
-
-        e_train_gym = StockTradingEnv(df = training_set, **env_kwargs)
-        env_train, _ = e_train_gym.get_sb_env()
-
-        # model, trainer = get_agent(agent_name, 
-        #     agent_class, 
-        #     agent_kwargs, 
-        #     env_train, 
-        #     dynamics_kwargs = agent_kwargs['dynamics_kwargs'] 
-        #     if 'dynamics_kwargs' in agent_kwargs else None)
-
-        # if weights is not None:
-        #     model.load_weights(weights)
-
-        DRLAgent(env_train).train_model(model = agent, tb_log_name=name, total_timesteps=timesteps_per_env)
-
-        # weights = f'{agent_name}_model.pth'
-        # model.save(weights) # TODO save model weights and load in next episode for continued training
-
-
-def run_trial(agents, train_set, val_set, test_set, tickers, env_episodes = 100, timesteps_per_env = 100, assets_per_ep = 10 , agents_kwargs = None, indicators = []):
-    '''
-    Run a single trial for the given agents on the given dataset.
-    agents:: dict('names':'agent_class')
-    train_set: pd.DataFrame
-    val_set: pd.DataFrame
-    test_set: pd.DataFrame
-    tickers: array of tickers in the dataset
-    episodes: int
-    assets_per_ep: int
-    agents_kwargs: dict of dicts of kwargs for each agent, e.g. {'agent_name': {'lr': 0.001, 'gamma': 0.99}}
-    '''
-
-    print(f'Running trial for agents {agents} on dataset with {len(tickers)} ticker(s) with {} trading days \n')
-
-    for agent_name, agent_class in agents.items():
-        print(f'Training agent {agent_name} \n')
-        agent_kwargs = agents_kwargs[agent_name]
-
-        weights = None
-
-        for episode in range(1, env_episodes+1):
-
-            train, val, test, tics = sample_tickers(train_set, val_set, test_set, tickers, assets_per_ep)
-            print(f'Episode {episode} with tickers {tics} \n')
-
-            e_train_gym = StockTradingEnv(df = train, **env_kwargs)
-            env_train, _ = e_train_gym.get_sb_env()
-
-            print('action space',env_train.action_space)
-
-            model, trainer = get_agent(agent_name, 
-                agent_class, 
-                agent_kwargs, 
-                env_train, 
-                dynamics_kwargs = agent_kwargs['dynamics_kwargs'] 
-                if 'dynamics_kwargs' in agent_kwargs else None)
-
-            if weights is not None:
-                model.load_weights(weights)
-
-            trainer.train_model(model = model, tb_log_name=agent_name, total_timesteps=timesteps_per_env)
-
-            weights = f'{agent_name}_model.pth'
-            model.save(weights) # TODO save model weights and load in next episode for continued training
-            
-
-            assert False, 'Breakpoint'
-
 
 def train_dynamics_model(model, train_data, val = None):
     '''
@@ -347,11 +277,31 @@ def train_predictor_agent(agent_name, agent_class, timesteps, train, val, env_kw
     dynamics_model = get_dynamics_model(agent_kwargs['dynamics_kwargs'])
     dynamics_model = train_dynamics_model(dynamics_model, train, val=val)
 
-def test_agent(agent, test_set):
+def test_agent(agent, test_set, uses_predictor = False, env_kwargs = None):
     # Implementation for testing an agent
-    pass
+
+    env = StockTradingEnv(df = test_set, **env_kwargs)
+    env_test, _ = env.get_sb_env()
+
+    rewards, actions, observations, predictions, trues = evaluate_model(agent, 
+                                                                        env_test,
+                                                                        n_eval_episodes=3, 
+                                                                        uses_predictor=uses_predictor
+                                                                        )
+    
+    results = {
+        'rewards': rewards,
+        'actions': actions,
+        'observations': observations,
+        'predictions': predictions,
+        'trues': trues
+    }
+    
+    return results
 
 def run_experiments(number_of_trials, agents, dataset, timesteps, env_kwargs = None, agents_kwargs = None, indicators = []):
+
+    results = {}
 
     for data_name in dataset.keys():
         train_set, val_set, test_set, tickers = get_data('2014-01-01', '2024-01-01', '2025-01-01', '2026-01-01', dataset[data_name], indicators)
@@ -362,9 +312,15 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, env_kwargs = N
 
         for trials in range(1, number_of_trials+1):
 
+            results[trials] = {}
+            results[trials][data_name] = {}
+
             train, val, test, tic = sample_tickers(train_set, val_set, test_set, tickers, assets_per_ep)
             
             for agent_name, agent_class in agents.items():
+
+                results[trials][data_name][agent_name] = {}
+
                 print(f'Running agent {agent_name} on dataset {data_name} with {tic} having {train["date"].nunique()} trading days\n')
 
                 agent_kwargs = agents_kwargs[agent_name]
@@ -396,7 +352,13 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, env_kwargs = N
                                                   val, 
                                                   env_kwargs, 
                                                   agent_kwargs)
-                test_agent(agent, test)
+                    
+                results[trials][data_name][agent_name] = test_agent(agent, 
+                                                                    test, 
+                                                                    not agent_name in model_free_agents, 
+                                                                    env_kwargs = env_kwargs)
+                
+    create_performance_report(results, dataset)
     
 
 if __name__ == '__main__':
@@ -417,7 +379,9 @@ if __name__ == '__main__':
     env_episodes = 10
     timesteps_per_env = 100
     agents = ['buy_and_hold', 'dense_model', 'dense_td3']
-    agents = {'autoformer_td3': ModelBasedTD3}
+    agents = {'autoformer_td3': ModelBasedTD3, 'buy_and_hold': BuyAndHold, 'dense_td3': ModelBasedTD3, 
+              'td3': DRLAgent.get_model('td3'), 'ppo': DRLAgent.get_model('ppo'), 
+              'dense_predictor': PredictionSignStrategy, 'autoformer_predictor': PredictionSignStrategy}
 
     stock_dimension = assets_per_ep
     state_space = 1 + 2*stock_dimension + len(indicators)*stock_dimension
