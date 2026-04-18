@@ -1,7 +1,9 @@
 import argparse
 import random as rnd
 import os
-import warnings 
+import warnings
+
+import torch 
 
 warnings.filterwarnings("ignore")
 
@@ -26,7 +28,8 @@ from enviroments.test_env_stocktrading import StockTradingEnv
 
 from models.train_autoformer import train_autoformer_from_finrl
 
-predictor_agents = ['dense_predictor', 'autoformer_predictor', 'buy_and_hold']
+predictor_agents = ['dense_predictor', 'autoformer_predictor']
+basic_agents = ['buy_and_hold']
 model_based_agents = ['dense_td3', 'autoformer_td3']
 model_free_agents = ['ddpg','ppo','td3']
 
@@ -80,9 +83,7 @@ def train_dynamics_model(model, train_data, val = None):
     train_autoformer_from_finrl(model, train_data, val_finrl_df=val)
     return model
 
-
 def train_agentic_model(model, env, timesteps, eval_callback = None):
-    
     '''
     Train the agentic model on the given environment.
     model: RL model (e.g. TD3) with a .learn() method
@@ -121,8 +122,6 @@ def train_model_free_agent(agent_name, agent_class, timesteps, train, val, env_k
 
     env = StockTradingEnv(df = train, **env_kwargs)
     env_train, _ = env.get_sb_env()
-
-    agent_kwargs['dynamics_kwargs']['feature_dim'] = len(tickers)
 
     model = DRLAgent(env_train).get_model(agent_name, model_kwargs = agent_kwargs)
 
@@ -219,6 +218,10 @@ def train_predictor_agent(agent_name, agent_class, timesteps, train, val, env_kw
 
     return agent_class(dynamics_model, env_kwargs['hmax'], stock_dimension)
 
+def get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs):
+    # Implementation for getting a basic agent (e.g. Buy and Hold)
+    return agent_class(env_kwargs['stock_dim'], device = 'cuda' if torch.cuda.is_available() else 'cpu')
+
 def test_agent(agent, test_set, uses_predictor = False, env_kwargs = None):
     # Implementation for testing an agent
 
@@ -234,9 +237,10 @@ def test_agent(agent, test_set, uses_predictor = False, env_kwargs = None):
     results = {
         'rewards': rewards,
         'actions': actions,
-        'observations': observations,
+        'states': observations,
         'predictions': predictions,
-        'trues': trues
+        'actuals': trues,
+        'stock_dim': env_kwargs['stock_dim'],
     }
     
     return results
@@ -293,12 +297,14 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                                                   val, 
                                                   env_kwargs, 
                                                   agent_kwargs)
+                elif agent_name in basic_agents:
+                    agent = get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs)
                 else:
                     raise ValueError(f"Can't find agent {agent_name}")
                     
                 results[trials][data_name][agent_name] = test_agent(agent, 
                                                                     test, 
-                                                                    not agent_name in model_free_agents, 
+                                                                    not agent_name in model_free_agents+basic_agents, 
                                                                     env_kwargs = env_kwargs)
                 
     create_performance_report(results, dataset)
@@ -351,6 +357,13 @@ if __name__ == '__main__':
               'dense_predictor': PredictionSignStrategy, 
               'autoformer_predictor': PredictionSignStrategy,
               'autoformer_td3': ModelBasedTD3, }
+    
+    # agents = {
+    #             'buy_and_hold': BuyAndHold, 
+    #           'dense_predictor': PredictionSignStrategy, 
+    #           'td3': None,
+
+    # }
 
     stock_dimension = assets_per_ep
     state_space = 1 + 2*stock_dimension + len(indicators)*stock_dimension

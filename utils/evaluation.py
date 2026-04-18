@@ -11,6 +11,7 @@ from stable_baselines3.common import type_aliases
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is_vecenv_wrapped
 
 from enviroments.test_env_stocktrading import StockTradingEnv
+# from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
 def evaluate_model(
     model: "type_aliases.PolicyPredictor",
@@ -104,7 +105,7 @@ def evaluate_model(
                         deterministic=deterministic,
                     )
 
-                ep_actions.append(action.copy())
+                ep_actions.append(action)
                 new_obs, rewards, dones, infos = env.step(action)
                 ep_rewards.append(float(rewards[0]))
                 episode_starts = dones
@@ -238,6 +239,8 @@ def autoformer_evaluate_policy(
             episode_start=episode_starts,
             deterministic=deterministic,
         )
+        if isinstance(actions, th.Tensor):
+            actions = np.array(actions.detach().numpy())
         new_observations, rewards, dones, infos = env.step(actions)
         current_rewards += rewards
         current_lengths += 1

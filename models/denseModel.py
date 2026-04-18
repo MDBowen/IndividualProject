@@ -79,17 +79,12 @@ class DenseModel(torch.nn.Module):
         return torch.nn.MSELoss()
     
     def _predict(self, x, y, x_m, y_m):
-        
-        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-        dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-
-        with torch.no_grad():
-            pred = self.forward(x)
+        x = x.to(self.device)
+        pred = self.forward(x)
 
         f_dim = -1 if self.args.features == 'MS' else 0
-        outputs = outputs[:, -self.args.pred_len:, f_dim:]
-        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-
+        pred = pred[:, -self.args.pred_len:, f_dim:]
+        y = y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
         return pred, y 
 

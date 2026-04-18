@@ -38,10 +38,19 @@ class PredictorStrategy():
         deterministic: bool = False,
     ) -> tuple[np.ndarray, tuple[np.ndarray, ...] | None]:
         
+        if len(observation.shape) == 3:
+            price = np.array(observation[:, :, 1:self.feature_len+1])
+        elif len(observation.shape) == 2:
+            price = np.array(observation[:, 1:self.feature_len+1])
+        else:
+            raise ValueError(f'Unexpected prediction shape: {pred.shape}')
+        
         self.dynamics_model.model.eval()
-        price = np.array(observation[:, 1:self.feature_len+1]).reshape(self.feature_len)
         with torch.no_grad():
             pred = self._get_prediction(price, date)
+
+        batch_size = observation.shape[0]
+        shape = (batch_size, self.feature_len) if len(observation.shape) == 2 else (self.feature_len,)
 
         if len(pred.shape) == 3:
             pred = pred[:, self.pred_idx, :]
@@ -50,7 +59,10 @@ class PredictorStrategy():
         else:
             raise ValueError(f'Unexpected prediction shape: {pred.shape}')
 
+        assert pred.shape == price.shape, f'pred and price not same shape: {pred.shape}, {price.shape}'
+
         action = self.strategy_func(pred, price)
+        action = action.reshape(shape)
 
         return action, state
     
@@ -67,7 +79,7 @@ class PredictorStrategy():
         self.window_buffer.add(x, date) 
         x, y, x_mark, y_mark = self.window_buffer.get_last(device = self.device)
         pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
-        return pred.detach()
+        return pred.detach().cpu().numpy()
 
     def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale = True):
         reshape_and_scale = lambda transform, _x, shape: th.Tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().numpy())).reshape(shape[0], shape[1], shape[2]).to(_x.device)
@@ -90,22 +102,29 @@ class PredictorStrategy():
 
         return pred, y
     
-class BuyAndHold(PredictorStrategy):
-    def __init__(self, dynamics_model, hmax, feature_len, scaler = None, pred_idx = 0, device = 'cpu'):
-        super().__init__(dynamics_model, hmax, feature_len, scaler = scaler, pred_idx = pred_idx, device = device)
+class BuyAndHold:
+    def __init__(self, feature_len, device = 'cpu'):
         self.inx = 0 
-
-    def strategy_func(self, prediciton, price):
+        self.feature_len = feature_len
+    
+    def predict(
+        self,
+        observation: np.ndarray | dict[str, np.ndarray],
+        state: tuple[np.ndarray, ...] | None = None,
+        date: object | None = None,
+        episode_start: np.ndarray | None = None,
+        deterministic: bool = False,
+    ) -> tuple[np.ndarray, tuple[np.ndarray, ...] | None]:
+        
+        batch_size = observation.shape[0]
+        shape = (batch_size, self.feature_len) if len(observation.shape) == 2 else (self.feature_len,)
         if self.inx == 0:
-            action = np.ones(self.feature_len)
+            action = np.ones(shape, dtype=np.float32)
             self.inx += 1
         else:
-            action = np.zeros(self.feature_len)
-        return action
-    
-    def _get_prediction(self, x, date):
-        return np.zeros_like(self.window_buffer.get_last()[1].detach().cpu().numpy())
-    
+            action = np.zeros(shape, dtype=np.float32)
+
+        return action, state
 
 class PredictionSignStrategy(PredictorStrategy):
     def __init__(self, dynamics_model, hmax, feature_len, scaler = None, pred_idx = 0, device = 'cpu'):

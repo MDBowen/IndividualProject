@@ -59,14 +59,18 @@ def _apply_paper_style():
 # Metric computation helpers                                                    #
 # --------------------------------------------------------------------------- #
 
-def _portfolio_values_from_states(states: np.ndarray, features: int) -> np.ndarray:
+def _portfolio_values_from_states(states: np.ndarray, features: int, stock_dim: int | None = None) -> np.ndarray:
     """Reconstruct portfolio value at every timestep from the state array.
 
     State layout: [cash, price_0..price_n, shares_0..shares_n, tech_indicators...]
+
+    stock_dim overrides features when the experiment used a sampled subset of
+    the full ticker universe (assets_per_ep < len(all_tickers)).
     """
+    n = stock_dim if stock_dim is not None else features
     balances = states[:, 0]
-    prices = states[:, 1:features + 1]
-    holdings = states[:, features + 1: features * 2 + 1]
+    prices = states[:, 1:n + 1]
+    holdings = states[:, n + 1: n * 2 + 1]
     return balances + np.sum(holdings * prices, axis=1)
 
 
@@ -325,9 +329,11 @@ def _plot_portfolio_performance(
 
         for trial in trials:
             try:
-                states = np.array(results[trial][dataset_name][agent]['states'])
-                pv = _portfolio_values_from_states(states, features)
-                all_pv.append(pv)
+                entry = results[trial][dataset_name][agent]
+                stock_dim = entry.get('stock_dim')
+                for ep_states in entry['states']:
+                    pv = _portfolio_values_from_states(np.array(ep_states), features, stock_dim)
+                    all_pv.append(pv)
             except (KeyError, IndexError):
                 continue
 
@@ -443,18 +449,24 @@ def _plot_predictions_vs_actual(
             ax = axes[row][col]
             ticker = ticker_names[asset_idx] if asset_idx < len(ticker_names) else str(asset_idx)
 
-            # Collect actual & prediction over trials
+            # Collect actual & prediction over trials; each is a list of per-episode arrays
             all_preds = []
             actuals_ref = None
             for trial in trials:
                 try:
-                    pred = np.array(results[trial][dataset_name][agent]['predictions'])
-                    act  = np.array(results[trial][dataset_name][agent]['actuals'])
-                    if pred.ndim == 2:
-                        all_preds.append(pred[:, asset_idx])
+                    ep_preds = results[trial][dataset_name][agent]['predictions']
+                    ep_acts  = results[trial][dataset_name][agent]['actuals']
+                    pred = np.concatenate(ep_preds, axis=0)
+                    act  = np.concatenate(ep_acts,  axis=0)
+                    # squeeze batch dim + take step-0 → (T, stock_dim)
+                    if pred.ndim == 4:
+                        pred = pred[:, 0, 0, :]
+                    elif pred.ndim == 3:
+                        pred = pred[:, 0, :]
+                    all_preds.append(pred[:, asset_idx])
                     if actuals_ref is None:
                         actuals_ref = act[:, asset_idx] if act.ndim == 2 else act
-                except (KeyError, IndexError):
+                except (KeyError, IndexError, ValueError):
                     continue
 
             if actuals_ref is None or not all_preds:
@@ -485,10 +497,18 @@ def _plot_predictions_vs_actual(
             if col == 0:
                 ax.set_ylabel('Price')
 
-    # Shared legend at top
-    handles, labels = axes[0][0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', ncol=len(labels),
-               frameon=True, bbox_to_anchor=(0.5, 1.02))
+    # Shared legend at top — collect from all axes in case row 0 col 0 was skipped
+    handles, labels = [], []
+    for row_axes in axes:
+        for ax in row_axes:
+            h, l = ax.get_legend_handles_labels()
+            for handle, label in zip(h, l):
+                if label not in labels:
+                    handles.append(handle)
+                    labels.append(label)
+    if handles:
+        fig.legend(handles, labels, loc='upper center', ncol=max(1, len(labels)),
+                   frameon=True, bbox_to_anchor=(0.5, 1.02))
 
     fig.suptitle(
         f'Price Predictions vs Actual — {dataset_name}',
@@ -560,17 +580,30 @@ def create_performance_report(
 
             for trial in trials:
                 entry = results[trial][dataset_name].get(agent, {})
-                states = entry.get('states')
-                if states is not None and len(states) > 1:
-                    pv = _portfolio_values_from_states(np.array(states), features)
-                    trial_fin.append(_compute_financial_metrics(pv))
 
+                # states is a list of per-episode arrays (T, obs_dim)
+                states = entry.get('states')
+                if states is not None:
+                    stock_dim = entry.get('stock_dim')
+                    for ep_states in states:
+                        ep_states = np.array(ep_states)
+                        if ep_states.ndim == 2 and len(ep_states) > 1:
+                            pv = _portfolio_values_from_states(ep_states, features, stock_dim)
+                            trial_fin.append(_compute_financial_metrics(pv))
+
+                # predictions/actuals are lists of per-episode arrays — concatenate
                 preds   = entry.get('predictions')
                 actuals = entry.get('actuals')
-                if preds is not None and actuals is not None:
-                    trial_pred.append(
-                        _compute_prediction_metrics(np.array(preds), np.array(actuals))
-                    )
+                if preds is not None and actuals is not None and len(preds) > 0:
+                    p = np.concatenate(preds, axis=0)
+                    a = np.concatenate(actuals, axis=0)
+                    # predictions may be (T, 1, pred_len, stock_dim) — squeeze batch
+                    # dim and take step-0 (next-day) to align with actuals (T, stock_dim)
+                    if p.ndim == 4:
+                        p = p[:, 0, 0, :]
+                    elif p.ndim == 3:
+                        p = p[:, 0, :]
+                    trial_pred.append(_compute_prediction_metrics(p, a))
 
             if trial_fin:
                 # Average each metric across trials

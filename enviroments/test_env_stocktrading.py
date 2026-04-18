@@ -316,6 +316,7 @@ class StockTradingEnv(gym.Env):
 
         else:
             actions = actions * self.hmax  # actions initially is scaled between 0 to 1
+            # actions = np.array(actions, dtype=np.uint8)
             actions = actions.astype(
                 int
             )  # convert into integer because we can't by fraction of shares
@@ -328,9 +329,14 @@ class StockTradingEnv(gym.Env):
             )
             # print("begin_total_asset:{}".format(begin_total_asset))
 
+            buy_index = []
+            sell_index = []
+
             argsort_actions = np.argsort(actions)
-            sell_index = argsort_actions[: np.where(actions < 0)[0].shape[0]]
-            buy_index = argsort_actions[::-1][: np.where(actions > 0)[0].shape[0]]
+            if (actions < 0).any():
+                sell_index = argsort_actions[: np.where(actions < 0)[0].shape[0]]
+            if (actions > 0).any():
+                buy_index = argsort_actions[::-1][: np.where(actions > 0)[0].shape[0]]
 
             for index in sell_index:
                 # print(f"Num shares before: {self.state[index+self.stock_dim+1]}")
