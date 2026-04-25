@@ -62,7 +62,7 @@ class DenseModel(torch.nn.Module):
         return model_optim
 
     def _select_criterion(self):
-        criterion = nn.MSELoss()
+        criterion = torch.nn.MSELoss()
         return criterion
 
     def forward(self, x):

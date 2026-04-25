@@ -518,6 +518,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             **self.policy_kwargs,
         )
         self.policy = self.policy.to(self.device)
+        self.dynamics_model = self.dynamics_model.to(self.device)
 
         # Convert train freq parameter to TrainFreq object
         self._convert_train_freq()

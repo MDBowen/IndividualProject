@@ -106,10 +106,10 @@ class Autoformer_Buffer:
         dec_inp = th.zeros(( self.pred_len, self.feature_size)).float()
         dec_inp = th.cat([y_label, dec_inp], dim = 0).float().to(device)
 
-        x = x.reshape(1, self.seq_len, self.feature_size).float()
+        x = x.reshape(1, self.seq_len, self.feature_size).float().to(device)
         dec_inp = dec_inp.reshape(1, self.label_len + self.pred_len, self.feature_size).float()
-        x_mark = x_mark.reshape(1, self.seq_len, x_mark.shape[-1]).float()
-        y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1]).float()
+        x_mark = x_mark.reshape(1, self.seq_len, x_mark.shape[-1]).float().to(device)
+        y_mark = y_mark.reshape(1, self.label_len + self.pred_len, y_mark.shape[-1]).float().to(device)
         
         return x, dec_inp, x_mark, y_mark
 
@@ -402,18 +402,18 @@ class CustomReplayBuffer(BaseBuffer):
 
         x, y, next_x, next_y = tuple(map(reshape, [x, y, next_x, next_y]))
 
-        pred_x = th.Tensor(x)
-        pred_y = th.Tensor(y)
-        next_pred_x = th.Tensor(next_x)
-        next_pred_y = th.Tensor(next_y)
+        pred_x = th.tensor(x, dtype=th.float32, device=self.device)
+        pred_y = th.tensor(y, dtype=th.float32, device=self.device)
+        next_pred_x = th.tensor(next_x, dtype=th.float32, device=self.device)
+        next_pred_y = th.tensor(next_y, dtype=th.float32, device=self.device)
         x_mark_batch = np.array(x_mark_batch)
         y_mark_batch = np.array(y_mark_batch)
         next_x_mark_batch = np.array(next_x_mark_batch)
         next_y_mark_batch = np.array(next_y_mark_batch)
-        pred_x_mark = th.Tensor(x_mark_batch)
-        pred_y_mark = th.Tensor(y_mark_batch)
-        next_pred_x_mark = th.Tensor(next_x_mark_batch)
-        next_pred_y_mark = th.Tensor(next_y_mark_batch)
+        pred_x_mark = th.tensor(x_mark_batch, dtype=th.float32, device=self.device)
+        pred_y_mark = th.tensor(y_mark_batch, dtype=th.float32, device=self.device)
+        next_pred_x_mark = th.tensor(next_x_mark_batch, dtype=th.float32, device=self.device)
+        next_pred_y_mark = th.tensor(next_y_mark_batch, dtype=th.float32, device=self.device)
 
         pred_x      = pred_x.reshape(len(batch_inds), self.seq_len, self.price_dims)
         pred_y      = pred_y.reshape(len(batch_inds), self.label_len + self.pred_len, self.price_dims)
@@ -425,15 +425,15 @@ class CustomReplayBuffer(BaseBuffer):
         next_pred_y_mark = next_pred_y_mark.reshape(len(batch_inds), self.label_len + self.pred_len, y_mark_batch.shape[-1])
 
         data = (
-            th.Tensor(self._normalize_obs(self.observations[batch_inds, env_indices, :], env)),
-            th.Tensor(self.actions[batch_inds, env_indices, :]),
-            th.Tensor(next_obs),
+            th.tensor(self._normalize_obs(self.observations[batch_inds, env_indices, :], env), dtype=th.float32, device=self.device),
+            th.tensor(self.actions[batch_inds, env_indices, :], dtype=th.float32, device=self.device),
+            th.tensor(next_obs, dtype=th.float32, device=self.device),
             (pred_x, pred_y, pred_x_mark, pred_y_mark),
             (next_pred_x, next_pred_y, next_pred_x_mark, next_pred_y_mark),
             # Only use dones that are not due to timeouts
             # deactivated by default (timeouts is initialized as an array of False)
-            th.Tensor((self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1)),
-            th.Tensor(self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env)),
+            th.tensor((self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1), dtype=th.float32, device=self.device),
+            th.tensor(self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env), dtype=th.float32, device=self.device),
         )
         return ModelBasedSample(*data)
 

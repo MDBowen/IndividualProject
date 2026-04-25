@@ -237,6 +237,7 @@ class ModelBasedPPO(OnPolicyAlgorithm):
             self.policy_observation_space, self.action_space, self.lr_schedule, use_sde=self.use_sde, **self.policy_kwargs
         )
         self.policy = self.policy.to(self.device)
+        self.dynamics_model = self.dynamics_model.to(self.device)
         # Warn when not using CPU with MlpPolicy
         self._maybe_recommend_cpu()
 
