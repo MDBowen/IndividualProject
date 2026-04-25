@@ -49,8 +49,8 @@ class DenseModel(torch.nn.Module):
             torch.nn.Linear(l[1], l[2]),
             torch.nn.LeakyReLU(),
             torch.nn.Dropout(0.1),
-            torch.nn.Linear(l[2], output_size)   
-        )
+            torch.nn.Linear(l[2], output_size)
+        ).to(self.device)
 
         self.loss = torch.nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
