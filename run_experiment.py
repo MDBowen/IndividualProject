@@ -415,6 +415,12 @@ if __name__ == '__main__':
         default=5,
         help='Minimum evaluations before early stopping can trigger (default: 5)',
     )
+    parser.add_argument(
+        '--only_sp100',
+        type=bool,
+        default=False,
+        help = 'For testing only run sp100'
+    )
     args = parser.parse_args()
 
     n_trials      = args.n_trials
@@ -431,7 +437,7 @@ if __name__ == '__main__':
 
     print(
         f'Config — n_trials={n_trials}  timesteps={timesteps}  assets_per_ep={assets_per_ep}  '
-        f'eval_freq={args.eval_freq}  n_eval_episodes={args.n_eval_episodes}  '
+        f'eval_freq={timesteps // args.eval_num,}  n_eval_episodes={args.n_eval_episodes}  '
         f'max_no_improvement_evals={args.max_no_improvement_evals}  min_evals={args.min_evals}'
     )
 
@@ -518,7 +524,8 @@ if __name__ == '__main__':
         'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}}
     }
 
-    all_tickers = {'sp100': all_tickers['sp100']}
+    if args.only_sp100:
+        all_tickers = {'sp100': all_tickers['sp100']}
 
     run_experiments(
         n_trials,
