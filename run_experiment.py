@@ -364,7 +364,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--n_trials',
         type=int,
-        default=1,
+        default=3,
         help='Number of independent trials per agent/dataset combination (default: 1)',
     )
     parser.add_argument(
@@ -388,7 +388,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--verbose',
         type=int,
-        default=1,
+        default=0,
         help='Verbosity level for eval callbacks (default: 1)',
     )
     parser.add_argument(
@@ -398,10 +398,10 @@ if __name__ == '__main__':
         help='Number of episodes per callback evaluation (default: 5)',
     )
     parser.add_argument(
-        '--eval_freq',
+        '--eval_num',
         type=int,
-        default=defaults_steps/100,
-        help='Evaluate every N training steps (default: 50)',
+        default=100,
+        help='Number of evals (default: 100)',
     )
     parser.add_argument(
         '--max_no_improvement_evals',
@@ -424,7 +424,7 @@ if __name__ == '__main__':
     callback_kwargs = {
         'verbose':                  args.verbose,
         'n_eval_episodes':          args.n_eval_episodes,
-        'eval_freq':                args.eval_freq,
+        'eval_freq':                timesteps // args.eval_num,
         'max_no_improvement_evals': args.max_no_improvement_evals,
         'min_evals':                args.min_evals,
     }
