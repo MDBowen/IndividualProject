@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore")
 from data.tickers import all_tickers 
 from data.test_yahoo_downloader import TestYahooDownloader
 
-from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement
 
 from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 from finrl.agents.stablebaselines3.models import DRLAgent
@@ -95,7 +95,7 @@ def train_agentic_model(model, env, timesteps, eval_callback = None):
     return model
 
 
-def train_model_free_agent(agent_name, agent_class, timesteps, train, val, env_kwargs, agent_kwargs):
+def train_model_free_agent(agent_name, agent_class, timesteps, train, val, env_kwargs, agent_kwargs, callback_kwargs=None):
     # Implementation for training a model-free agent
     
     tickers = train.tic.unique()
@@ -126,12 +126,34 @@ def train_model_free_agent(agent_name, agent_class, timesteps, train, val, env_k
 
     model = DRLAgent(env_train).get_model(agent_name, model_kwargs = agent_kwargs)
 
-    callback = EvalCallback(val_env, best_model_save_path=f'./logs/{agent_name}/', log_path=f'./logs/{agent_name}/', eval_freq=50, deterministic=True, render=False)
+    cb = callback_kwargs or {}
+    stop_cb = StopTrainingOnNoModelImprovement(
+        max_no_improvement_evals=cb.get('max_no_improvement_evals', 10),
+        min_evals=cb.get('min_evals', 5),
+        verbose=cb.get('verbose', 1),
+    )
+    callback = EvalCallback(
+        val_env,
+        callback_after_eval=stop_cb,
+        best_model_save_path=f'./logs/{agent_name}/',
+        log_path=f'./logs/{agent_name}/',
+        n_eval_episodes=cb.get('n_eval_episodes', 5),
+        eval_freq=cb.get('eval_freq', 50),
+        deterministic=True,
+        render=False,
+        verbose=cb.get('verbose', 1),
+    )
 
-    return train_agentic_model(model, env_train, timesteps=timesteps, eval_callback = callback)
+    model = train_agentic_model(model, env_train, timesteps=timesteps, eval_callback=callback)
+
+    best_path = f'./logs/{agent_name}/best_model.zip'
+    if os.path.exists(best_path):
+        model.set_parameters(best_path)
+        print(f"[{agent_name}] Restored best model from {best_path}")
+
+    return model
      
-
-def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_kwargs, agent_kwargs):
+def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_kwargs, agent_kwargs, callback_kwargs=None):
     # Implementation for training a model-based agent
 
     def temporal_split(df, date_col, ratio):
@@ -164,12 +186,9 @@ def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_
     env_train, _ = env.get_sb_env()
     agent_kwargs['_dynamics_kwargs']['feature_dim'] = len(tickers)
 
-
     dynamics_model = get_dynamics_model(agent_kwargs['_dynamics_kwargs'])
 
     dynamics_model = train_dynamics_model(dynamics_model, pred_train, val=agent_train)
-
-
 
     model = agent_class(
             
@@ -184,8 +203,29 @@ def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_
     _env = StockTradingEnv(df = val, **env_kwargs)
     val_env, _ = _env.get_sb_env()
 
-    callback = CustomCallback(val_env, best_model_save_path=f'./logs/{agent_name}/', log_path=f'./logs/{agent_name}/', eval_freq=50, deterministic=True, render=False)
-    model = train_agentic_model(model, env_train, timesteps=timesteps, eval_callback = callback)
+    cb = callback_kwargs or {}
+    stop_cb = StopTrainingOnNoModelImprovement(
+        max_no_improvement_evals=cb.get('max_no_improvement_evals', 10),
+        min_evals=cb.get('min_evals', 5),
+        verbose=cb.get('verbose', 1),
+    )
+    callback = CustomCallback(
+        val_env,
+        callback_after_eval=stop_cb,
+        best_model_save_path=f'./logs/{agent_name}/',
+        log_path=f'./logs/{agent_name}/',
+        n_eval_episodes=cb.get('n_eval_episodes', 5),
+        eval_freq=cb.get('eval_freq', 50),
+        deterministic=True,
+        render=False,
+        verbose=cb.get('verbose', 1),
+    )
+    model = train_agentic_model(model, env_train, timesteps=timesteps, eval_callback=callback)
+
+    best_path = f'./logs/{agent_name}/best_model.zip'
+    if os.path.exists(best_path):
+        model.set_parameters(best_path)
+        print(f"[{agent_name}] Restored best model from {best_path}")
 
     return model
 
@@ -224,7 +264,7 @@ def get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs):
     # Implementation for getting a basic agent (e.g. Buy and Hold)
     return agent_class(env_kwargs['stock_dim'], device = 'cuda' if torch.cuda.is_available() else 'cpu')
 
-def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=None):
+def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=None, eval_episodes = 3):
 
     env = StockTradingEnv(df=test_set, **env_kwargs)
     env_test, _ = env.get_sb_env()
@@ -232,7 +272,7 @@ def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=N
     rewards, actions, observations, predictions, trues = evaluate_model(
         agent,
         env_test,
-        n_eval_episodes=3,
+        n_eval_episodes=eval_episodes,
         uses_predictor=uses_predictor,
     )
 
@@ -246,12 +286,13 @@ def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=N
         'tickers': list(tickers) if tickers is not None else None,
     }
 
-def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs = None, agents_kwargs = None, indicators = []):
+def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs=None, agents_kwargs=None, indicators=[], eval_episodes=3, callback_kwargs=None):
 
     results = {}
 
     for data_name in dataset.keys():
-        train_set, val_set, test_set, tickers = get_data('2014-01-01', '2024-01-01', '2025-01-01', '2026-01-01', dataset[data_name], indicators)
+        train_set, val_set, test_set, tickers = get_data('2000-01-01', '2023-01-01', '2024-01-01', '2026-01-01', dataset[data_name], indicators)
+
         #gets the whole dataframe of a 'market' (e.g. sp100) and the unique tickers in that dataframe
 
         'gets a subset of n assets from a market'
@@ -273,22 +314,24 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                 agent_kwargs = agents_kwargs[agent_name]
 
                 if agent_name in model_free_agents:
-                    agent = train_model_free_agent(agent_name, 
-                                                   agent_class, 
-                                                   timesteps, 
-                                                   train, 
-                                                   val, 
-                                                   env_kwargs, 
-                                                   agent_kwargs)
+                    agent = train_model_free_agent(agent_name,
+                                                   agent_class,
+                                                   timesteps,
+                                                   train,
+                                                   val,
+                                                   env_kwargs,
+                                                   agent_kwargs,
+                                                   callback_kwargs=callback_kwargs)
 
                 elif agent_name in model_based_agents:
-                    agent = train_model_based_agent(agent_name, 
-                                                    agent_class, 
-                                                    timesteps, 
-                                                    train, 
-                                                    val, 
-                                                    env_kwargs, 
-                                                    agent_kwargs)
+                    agent = train_model_based_agent(agent_name,
+                                                    agent_class,
+                                                    timesteps,
+                                                    train,
+                                                    val,
+                                                    env_kwargs,
+                                                    agent_kwargs,
+                                                    callback_kwargs=callback_kwargs)
 
                 elif agent_name in predictor_agents:
                     agent = train_predictor_agent(agent_name, 
@@ -309,13 +352,14 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                     uses_predictor=agent_name not in model_free_agents + basic_agents,
                     env_kwargs=env_kwargs,
                     tickers=tic,
+                    eval_episodes=eval_episodes
                 )
                 
     create_performance_report(results, dataset)
     
 
 if __name__ == '__main__':
-
+    defaults_steps = 1000
     parser = argparse.ArgumentParser(description='Run RL trading experiments')
     parser.add_argument(
         '--n_trials',
@@ -326,7 +370,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--timesteps',
         type=int,
-        default=300,
+        default=defaults_steps,
         help='Total environment timesteps for RL agent training (default: 300)',
     )
     parser.add_argument(
@@ -337,9 +381,39 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--model_epochs',
-        type = int, 
+        type=int,
         default=10,
         help='Number of training epochs for dynamics models',
+    )
+    parser.add_argument(
+        '--verbose',
+        type=int,
+        default=1,
+        help='Verbosity level for eval callbacks (default: 1)',
+    )
+    parser.add_argument(
+        '--n_eval_episodes',
+        type=int,
+        default=3,
+        help='Number of episodes per callback evaluation (default: 5)',
+    )
+    parser.add_argument(
+        '--eval_freq',
+        type=int,
+        default=defaults_steps/100,
+        help='Evaluate every N training steps (default: 50)',
+    )
+    parser.add_argument(
+        '--max_no_improvement_evals',
+        type=int,
+        default=10,
+        help='Stop training after this many evals with no new best (default: 10)',
+    )
+    parser.add_argument(
+        '--min_evals',
+        type=int,
+        default=5,
+        help='Minimum evaluations before early stopping can trigger (default: 5)',
     )
     args = parser.parse_args()
 
@@ -347,7 +421,19 @@ if __name__ == '__main__':
     timesteps     = args.timesteps
     assets_per_ep = args.assets_per_ep
 
-    print(f'Config — n_trials={n_trials}  timesteps={timesteps}  assets_per_ep={assets_per_ep}')
+    callback_kwargs = {
+        'verbose':                  args.verbose,
+        'n_eval_episodes':          args.n_eval_episodes,
+        'eval_freq':                args.eval_freq,
+        'max_no_improvement_evals': args.max_no_improvement_evals,
+        'min_evals':                args.min_evals,
+    }
+
+    print(
+        f'Config — n_trials={n_trials}  timesteps={timesteps}  assets_per_ep={assets_per_ep}  '
+        f'eval_freq={args.eval_freq}  n_eval_episodes={args.n_eval_episodes}  '
+        f'max_no_improvement_evals={args.max_no_improvement_evals}  min_evals={args.min_evals}'
+    )
 
     indicators = [
         'macd',
@@ -443,6 +529,7 @@ if __name__ == '__main__':
         env_kwargs=env_kwargs,
         agents_kwargs=agents_kwargs,
         indicators=indicators,
+        callback_kwargs=callback_kwargs,
     )
 
     print('All done!')
