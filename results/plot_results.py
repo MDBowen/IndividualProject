@@ -45,7 +45,6 @@ PAPER_RC = {
     'grid.alpha': 0.25,
     'grid.linestyle': '--',
     'grid.color': '#444444',
-    'figure.constrained_layout.use': True,
 }
 
 SAVE_DPI = 300
@@ -316,7 +315,7 @@ def _plot_portfolio_performance(
     """Two-panel figure: (top) portfolio net value, (bottom) rolling drawdown."""
     _apply_paper_style()
 
-    fig = plt.figure(figsize=(9, 6))
+    fig = plt.figure(figsize=(9, 5))
     gs  = gridspec.GridSpec(2, 1, height_ratios=[3, 1], hspace=0.08)
     ax_val = fig.add_subplot(gs[0])
     ax_dd  = fig.add_subplot(gs[1], sharex=ax_val)
@@ -417,37 +416,69 @@ def _plot_predictions_vs_actual(
     """
     _apply_paper_style()
 
-    # Only include agents that store predictions
+    # Only include agents that have non-empty prediction lists
     pred_agents = [
         a for a in agents
         if any(
-            'predictions' in results[t][dataset_name].get(a, {})
+            len(results[t][dataset_name].get(a, {}).get('predictions', [])) > 0
             for t in trials
         )
     ]
     if not pred_agents:
         return
 
-    n_sample = min(n_assets, features)
-    sampled_idx = random.sample(range(features), n_sample)
+    # Determine actual stock_dim from the prediction arrays (may be smaller than
+    # the full universe `features` because tickers are sampled each trial).
+    stock_dim = features
+    for t in trials:
+        for a in pred_agents:
+            preds = results[t][dataset_name].get(a, {}).get('predictions', [])
+            if len(preds) > 0:
+                ep = np.array(preds[0])
+                if ep.ndim == 4:
+                    stock_dim = ep.shape[3]
+                elif ep.ndim == 3:
+                    stock_dim = ep.shape[2]
+                else:
+                    stock_dim = ep.shape[-1]
+                break
+        else:
+            continue
+        break
+
+    # Use stored ticker names for the sampled subset when available.
+    sampled_ticker_names = None
+    for t in trials:
+        for a in pred_agents:
+            stored = results[t][dataset_name].get(a, {}).get('tickers')
+            if stored is not None:
+                sampled_ticker_names = stored
+                break
+        if sampled_ticker_names is not None:
+            break
+    if sampled_ticker_names is None:
+        sampled_ticker_names = ticker_names[:stock_dim]
+
+    n_sample = min(n_assets, stock_dim)
+    sampled_idx = random.sample(range(stock_dim), n_sample)
 
     n_rows = n_sample
     n_cols = len(pred_agents)
+
     fig, axes = plt.subplots(
         n_rows, n_cols,
-        figsize=(4.5 * n_cols, 2.8 * n_rows),
+        figsize=(3.2 * n_cols, 2.4 * n_rows),
         squeeze=False,
-        sharey='row',
+        sharey=False,
     )
-
-    trial0 = trials[0]
+    fig.subplots_adjust(hspace=0.45, wspace=0.3)
 
     for col, agent in enumerate(pred_agents):
         agent_color = PALETTE[col % len(PALETTE)]
 
         for row, asset_idx in enumerate(sampled_idx):
             ax = axes[row][col]
-            ticker = ticker_names[asset_idx] if asset_idx < len(ticker_names) else str(asset_idx)
+            ticker = sampled_ticker_names[asset_idx] if asset_idx < len(sampled_ticker_names) else str(asset_idx)
 
             # Collect actual & prediction over trials; each is a list of per-episode arrays
             all_preds = []
@@ -480,7 +511,8 @@ def _plot_predictions_vs_actual(
             mean_pred = all_preds_arr.mean(axis=0)
             std_pred  = all_preds_arr.std(axis=0)
 
-            ax.plot(t, actuals_ref[:t_end], color='#2c3e50', linewidth=1.4,
+            actual_vals = actuals_ref[:t_end]
+            ax.plot(t, actual_vals, color='#2c3e50', linewidth=1.4,
                     label='Actual', zorder=4)
             ax.plot(t, mean_pred, color=agent_color, linewidth=1.4,
                     linestyle='--', label=f'{agent} prediction', zorder=3)
@@ -488,33 +520,37 @@ def _plot_predictions_vs_actual(
                 ax.fill_between(t, mean_pred - std_pred, mean_pred + std_pred,
                                 color=agent_color, alpha=0.2)
 
-            ax.set_title(f'{ticker}', fontsize=9)
+            # Pin y-axis to ±30 % of actual price range so off-scale predictions
+            # don't crush the actual price line
+            a_min, a_max = float(np.nanmin(actual_vals)), float(np.nanmax(actual_vals))
+            margin = max((a_max - a_min) * 0.30, a_max * 0.05)
+            ax.set_ylim(a_min - margin, a_max + margin)
+
+            ax.set_title(f'{ticker}  [{agent}]', fontsize=9)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
 
             if row == n_rows - 1:
                 ax.set_xlabel('Trading Day')
             if col == 0:
-                ax.set_ylabel('Price')
+                ax.set_ylabel('Price ($)')
 
-    # Shared legend at top — collect from all axes in case row 0 col 0 was skipped
+    # Shared legend — collect unique entries from all axes
     handles, labels = [], []
     for row_axes in axes:
         for ax in row_axes:
-            h, l = ax.get_legend_handles_labels()
-            for handle, label in zip(h, l):
-                if label not in labels:
-                    handles.append(handle)
-                    labels.append(label)
+            for h, l in zip(*ax.get_legend_handles_labels()):
+                if l not in labels:
+                    handles.append(h)
+                    labels.append(l)
     if handles:
         fig.legend(handles, labels, loc='upper center', ncol=max(1, len(labels)),
-                   frameon=True, bbox_to_anchor=(0.5, 1.02))
+                   frameon=True, bbox_to_anchor=(0.5, 1.0), fontsize=9)
 
     fig.suptitle(
         f'Price Predictions vs Actual — {dataset_name}',
-        fontsize=12, fontweight='bold', y=1.04,
+        fontsize=12, fontweight='bold', y=1.02,
     )
-    plt.tight_layout()
     fig.savefig(
         os.path.join(out_dir, f'{dataset_name}_predictions.png'),
         dpi=SAVE_DPI, bbox_inches='tight',
@@ -523,6 +559,570 @@ def _plot_predictions_vs_actual(
         os.path.join(out_dir, f'{dataset_name}_predictions.pdf'),
         bbox_inches='tight',
     )
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Rolling Sharpe                                                                #
+# --------------------------------------------------------------------------- #
+
+def _compute_rolling_sharpe(portfolio_values: np.ndarray, window: int = 30, trading_days: int = 252) -> np.ndarray:
+    pv = np.asarray(portfolio_values, dtype=float)
+    ret = np.diff(pv) / np.where(pv[:-1] != 0, pv[:-1], 1e-12)
+    sharpe = np.full(len(ret), np.nan)
+    for i in range(window - 1, len(ret)):
+        r = ret[i - window + 1: i + 1]
+        std = r.std(ddof=1)
+        sharpe[i] = (r.mean() / std * np.sqrt(trading_days)) if std > 0 else 0.0
+    return sharpe
+
+
+def _plot_rolling_sharpe(
+    results: dict, trials: list, dataset_name: str, agents: list,
+    features: int, out_dir: str, window: int = 30,
+):
+    _apply_paper_style()
+    fig, ax = plt.subplots(figsize=(9, 4))
+    fig.subplots_adjust(top=0.88, bottom=0.12, left=0.08, right=0.97)
+
+    for i, agent in enumerate(agents):
+        color = PALETTE[i % len(PALETTE)]
+        all_sharpe = []
+        for trial in trials:
+            try:
+                stock_dim = results[trial][dataset_name][agent].get('stock_dim')
+                for ep_states in results[trial][dataset_name][agent]['states']:
+                    pv = _portfolio_values_from_states(np.array(ep_states), features, stock_dim)
+                    all_sharpe.append(_compute_rolling_sharpe(pv, window))
+            except (KeyError, IndexError):
+                continue
+        if not all_sharpe:
+            continue
+        min_len = min(len(s) for s in all_sharpe)
+        arr = np.array([s[:min_len] for s in all_sharpe])
+        mean_s = np.nanmean(arr, axis=0)
+        std_s  = np.nanstd(arr, axis=0)
+        t = np.arange(min_len)
+        ax.plot(t, mean_s, color=color, label=agent)
+        ax.fill_between(t, mean_s - std_s, mean_s + std_s, color=color, alpha=0.15)
+
+    ax.axhline(0, color='black', linestyle=':', linewidth=0.9, alpha=0.5)
+    ax.set_xlabel('Trading Day')
+    ax.set_ylabel(f'{window}-day Rolling Sharpe')
+    ax.set_title(f'Rolling Sharpe Ratio — {dataset_name}', fontweight='bold')
+    ax.legend(loc='upper left', frameon=True)
+    for ext in ('png', 'pdf'):
+        fig.savefig(os.path.join(out_dir, f'{dataset_name}_rolling_sharpe.{ext}'),
+                    dpi=SAVE_DPI, bbox_inches='tight')
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Return distribution                                                           #
+# --------------------------------------------------------------------------- #
+
+def _plot_return_distribution(
+    results: dict, trials: list, dataset_name: str, agents: list,
+    features: int, out_dir: str,
+):
+    _apply_paper_style()
+
+    all_returns = {}
+    for agent in agents:
+        rets = []
+        for trial in trials:
+            try:
+                stock_dim = results[trial][dataset_name][agent].get('stock_dim')
+                for ep_states in results[trial][dataset_name][agent]['states']:
+                    pv = _portfolio_values_from_states(np.array(ep_states), features, stock_dim)
+                    r  = np.diff(pv) / np.where(pv[:-1] != 0, pv[:-1], 1e-12)
+                    rets.extend(r.tolist())
+            except (KeyError, IndexError):
+                continue
+        if rets:
+            all_returns[agent] = np.array(rets) * 100   # percent
+
+    if not all_returns:
+        return
+
+    n = len(all_returns)
+    fig, ax = plt.subplots(figsize=(max(5, 1.4 * n), 4))
+    fig.subplots_adjust(top=0.88, bottom=0.14, left=0.09, right=0.97)
+
+    positions  = list(range(n))
+    agent_list = list(all_returns.keys())
+
+    parts = ax.violinplot(
+        [all_returns[a] for a in agent_list],
+        positions=positions, widths=0.6,
+        showmeans=False, showmedians=False, showextrema=False,
+    )
+    for pc, color in zip(parts['bodies'], PALETTE):
+        pc.set_facecolor(color)
+        pc.set_alpha(0.5)
+
+    bp = ax.boxplot(
+        [all_returns[a] for a in agent_list],
+        positions=positions, widths=0.18,
+        patch_artist=True, notch=False,
+        medianprops=dict(color='black', linewidth=1.5),
+        boxprops=dict(facecolor='white', linewidth=1),
+        whiskerprops=dict(linewidth=1), capprops=dict(linewidth=1),
+        flierprops=dict(marker='.', markersize=2, alpha=0.3),
+    )
+    for patch, color in zip(bp['boxes'], PALETTE):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+
+    ax.axhline(0, color='black', linestyle=':', linewidth=0.9, alpha=0.5)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(agent_list, rotation=20, ha='right')
+    ax.set_ylabel('Daily Return (%)')
+    ax.set_title(f'Daily Return Distribution — {dataset_name}', fontweight='bold')
+    for ext in ('png', 'pdf'):
+        fig.savefig(os.path.join(out_dir, f'{dataset_name}_return_dist.{ext}'),
+                    dpi=SAVE_DPI, bbox_inches='tight')
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Prediction error over time                                                    #
+# --------------------------------------------------------------------------- #
+
+def _plot_prediction_error(
+    results: dict, trials: list, dataset_name: str, agents: list,
+    features: int, ticker_names: list, out_dir: str,
+    n_assets: int = 3, window: int = 30,
+):
+    pred_agents = [
+        a for a in agents
+        if any(len(results[t][dataset_name].get(a, {}).get('predictions', [])) > 0
+               for t in trials)
+    ]
+    if not pred_agents:
+        return
+
+    stock_dim_ref = None
+    for t in trials:
+        for a in pred_agents:
+            sd = results[t][dataset_name].get(a, {}).get('stock_dim')
+            if sd is not None:
+                stock_dim_ref = sd
+                break
+        if stock_dim_ref:
+            break
+    n_assets = min(n_assets, stock_dim_ref or features)
+    sampled_idx = random.sample(range(stock_dim_ref or features), n_assets)
+
+    fig, axes = plt.subplots(
+        n_assets, len(pred_agents),
+        figsize=(3.5 * len(pred_agents), 2.5 * n_assets),
+        squeeze=False,
+    )
+    fig.subplots_adjust(hspace=0.45, wspace=0.3)
+
+    for col, agent in enumerate(pred_agents):
+        agent_color = PALETTE[col % len(PALETTE)]
+        for row, asset_idx in enumerate(sampled_idx):
+            ax = axes[row][col]
+            ticker = ticker_names[asset_idx] if asset_idx < len(ticker_names) else str(asset_idx)
+            all_mae = []
+            for trial in trials:
+                try:
+                    preds   = results[trial][dataset_name][agent]['predictions']
+                    actuals = results[trial][dataset_name][agent]['actuals']
+                    p = np.concatenate(preds, axis=0)
+                    a = np.concatenate(actuals, axis=0)
+                    if p.ndim == 4: p = p[:, 0, 0, :]
+                    elif p.ndim == 3: p = p[:, 0, :]
+                    mae_series = np.abs(p[:, asset_idx] - a[:, asset_idx])
+                    # rolling window
+                    rolling = np.convolve(mae_series, np.ones(window) / window, mode='valid')
+                    all_mae.append(rolling)
+                except (KeyError, IndexError, ValueError):
+                    continue
+            if not all_mae:
+                ax.set_visible(False)
+                continue
+            min_len = min(len(m) for m in all_mae)
+            arr  = np.array([m[:min_len] for m in all_mae])
+            mean = arr.mean(axis=0)
+            std  = arr.std(axis=0)
+            t = np.arange(min_len)
+            ax.plot(t, mean, color=agent_color, linewidth=1.4)
+            ax.fill_between(t, mean - std, mean + std, color=agent_color, alpha=0.2)
+            ax.set_title(f'{ticker}  [{agent}]', fontsize=8)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            if row == n_assets - 1: ax.set_xlabel('Trading Day')
+            if col == 0: ax.set_ylabel(f'{window}d Rolling MAE')
+
+    fig.suptitle(f'Prediction Error Over Time — {dataset_name}',
+                 fontsize=12, fontweight='bold', y=1.02)
+    for ext in ('png', 'pdf'):
+        fig.savefig(os.path.join(out_dir, f'{dataset_name}_pred_error.{ext}'),
+                    dpi=SAVE_DPI, bbox_inches='tight')
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Predicted vs actual return scatter                                            #
+# --------------------------------------------------------------------------- #
+
+def _plot_pred_scatter(
+    results: dict, trials: list, dataset_name: str, agents: list,
+    features: int, ticker_names: list, out_dir: str, n_assets: int = 3,
+):
+    pred_agents = [
+        a for a in agents
+        if any(len(results[t][dataset_name].get(a, {}).get('predictions', [])) > 0
+               for t in trials)
+    ]
+    if not pred_agents:
+        return
+
+    stock_dim_ref = None
+    for t in trials:
+        for a in pred_agents:
+            sd = results[t][dataset_name].get(a, {}).get('stock_dim')
+            if sd is not None:
+                stock_dim_ref = sd; break
+        if stock_dim_ref: break
+    n_assets = min(n_assets, stock_dim_ref or features)
+    sampled_idx = random.sample(range(stock_dim_ref or features), n_assets)
+
+    fig, axes = plt.subplots(
+        n_assets, len(pred_agents),
+        figsize=(3.0 * len(pred_agents), 2.8 * n_assets),
+        squeeze=False,
+    )
+    fig.subplots_adjust(hspace=0.5, wspace=0.35)
+
+    for col, agent in enumerate(pred_agents):
+        agent_color = PALETTE[col % len(PALETTE)]
+        for row, asset_idx in enumerate(sampled_idx):
+            ax = axes[row][col]
+            ticker = ticker_names[asset_idx] if asset_idx < len(ticker_names) else str(asset_idx)
+            all_pred_ret, all_act_ret = [], []
+            for trial in trials:
+                try:
+                    preds   = results[trial][dataset_name][agent]['predictions']
+                    actuals = results[trial][dataset_name][agent]['actuals']
+                    p = np.concatenate(preds, axis=0)
+                    a = np.concatenate(actuals, axis=0)
+                    if p.ndim == 4: p = p[:, 0, 0, :]
+                    elif p.ndim == 3: p = p[:, 0, :]
+                    # 1-step predicted return vs actual return
+                    p_col = p[:, asset_idx]
+                    a_col = a[:, asset_idx]
+                    # shift: pred at t vs actual change from t to t+1
+                    pred_ret = np.diff(p_col)
+                    act_ret  = np.diff(a_col)
+                    all_pred_ret.append(pred_ret)
+                    all_act_ret.append(act_ret)
+                except (KeyError, IndexError, ValueError):
+                    continue
+            if not all_pred_ret:
+                ax.set_visible(False)
+                continue
+
+            pr = np.concatenate(all_pred_ret)
+            ar = np.concatenate(all_act_ret)
+            T  = len(pr)
+            colors_t = plt.cm.Blues(np.linspace(0.25, 0.9, T))
+
+            ax.scatter(pr, ar, c=colors_t, s=4, alpha=0.6, linewidths=0)
+
+            # R² and directional accuracy annotation
+            ss_res = np.sum((ar - pr) ** 2)
+            ss_tot = np.sum((ar - ar.mean()) ** 2)
+            r2     = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
+            dir_acc = np.mean(np.sign(pr) == np.sign(ar)) * 100
+            ax.text(0.05, 0.93, f'R²={r2:.2f}  Dir={dir_acc:.0f}%',
+                    transform=ax.transAxes, fontsize=7.5, va='top')
+
+            # y = x reference line
+            lim = max(abs(pr).max(), abs(ar).max()) * 1.1
+            ax.plot([-lim, lim], [-lim, lim], 'k--', linewidth=0.8, alpha=0.4)
+            ax.set_xlim(-lim, lim)
+            ax.set_ylim(-lim, lim)
+            ax.set_title(f'{ticker}  [{agent}]', fontsize=8)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            if row == n_assets - 1: ax.set_xlabel('Predicted Δ')
+            if col == 0: ax.set_ylabel('Actual Δ')
+
+    fig.suptitle(f'Predicted vs Actual Price Change — {dataset_name}',
+                 fontsize=12, fontweight='bold', y=1.02)
+    for ext in ('png', 'pdf'):
+        fig.savefig(os.path.join(out_dir, f'{dataset_name}_pred_scatter.{ext}'),
+                    dpi=SAVE_DPI, bbox_inches='tight')
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Actions vs price (per agent, dual y-axis)                                     #
+# --------------------------------------------------------------------------- #
+
+def _plot_actions_vs_price(
+    results: dict,
+    trials: list,
+    dataset_name: str,
+    agents: list,
+    features: int,
+    ticker_names: list,
+    out_dir: str,
+    n_samples: int = 3,
+):
+    """One figure per agent: n_samples rows, each showing action (left y) and price (right y)."""
+    _apply_paper_style()
+
+    for agent in agents:
+        # Collect concatenated episodes from first available trial
+        concat_actions = None
+        concat_prices  = None
+        stock_dim      = features
+        stored_tickers = None
+
+        for trial in trials:
+            entry = results[trial][dataset_name].get(agent, {})
+            if not entry.get('actions') or not entry.get('states'):
+                continue
+            stock_dim = entry.get('stock_dim', features)
+            if stored_tickers is None:
+                stored_tickers = entry.get('tickers')
+            acts_list   = [np.array(a) for a in entry['actions']]
+            states_list = [np.array(s) for s in entry['states']]
+            concat_actions = np.concatenate(acts_list, axis=0)     # (T_total, stock_dim)
+            concat_prices  = np.concatenate(
+                [s[:, 1:stock_dim + 1] for s in states_list], axis=0
+            )                                                         # (T_total, stock_dim)
+            break  # use first trial with data
+
+        if concat_actions is None:
+            continue
+
+        if stored_tickers is None:
+            stored_tickers = ticker_names[:stock_dim]
+
+        n_sample    = min(n_samples, stock_dim)
+        sampled_idx = random.sample(range(stock_dim), n_sample)
+
+        fig, axes = plt.subplots(n_sample, 1, figsize=(11, 3.5 * n_sample), squeeze=False)
+        fig.subplots_adjust(hspace=0.55)
+
+        T = len(concat_actions)
+        t = np.arange(T)
+
+        action_color = PALETTE[0]   # blue
+        price_color  = PALETTE[1]   # orange
+
+        for row, asset_idx in enumerate(sampled_idx):
+            ax_act   = axes[row][0]
+            ax_price = ax_act.twinx()
+
+            ticker = stored_tickers[asset_idx] if asset_idx < len(stored_tickers) else str(asset_idx)
+
+            act   = concat_actions[:, asset_idx] if concat_actions.ndim == 2 else concat_actions
+            price = concat_prices[:, asset_idx]
+
+            # Actions as semi-transparent bars so buy/sell is immediately visible
+            ax_act.bar(t, act, color=action_color, alpha=0.35, width=1.0, label='Action')
+            ax_act.axhline(0, color=action_color, linewidth=0.7, linestyle=':')
+            ax_act.set_ylabel('Action (−1 sell → +1 buy)', color=action_color, fontsize=9)
+            ax_act.tick_params(axis='y', labelcolor=action_color)
+            ax_act.spines['top'].set_visible(False)
+
+            ax_price.plot(t, price, color=price_color, linewidth=1.6, label='Price ($)', zorder=3)
+            ax_price.set_ylabel('Price ($)', color=price_color, fontsize=9)
+            ax_price.tick_params(axis='y', labelcolor=price_color)
+            ax_price.spines['top'].set_visible(False)
+
+            ax_act.set_title(f'{ticker}', fontsize=10, pad=4)
+            if row == n_sample - 1:
+                ax_act.set_xlabel('Trading Day')
+
+            h1, l1 = ax_act.get_legend_handles_labels()
+            h2, l2 = ax_price.get_legend_handles_labels()
+            ax_price.legend(h1 + h2, l1 + l2, loc='upper right', fontsize=8, frameon=True)
+
+        agent_label = agent.replace('_', ' ').title()
+        fig.suptitle(
+            f'Actions vs Price — {agent_label}  [{dataset_name}]',
+            fontsize=12, fontweight='bold',
+        )
+
+        agent_safe = agent.replace('/', '_')
+        for ext in ('png', 'pdf'):
+            fig.savefig(
+                os.path.join(out_dir, f'{dataset_name}_actions_price_{agent_safe}.{ext}'),
+                dpi=SAVE_DPI, bbox_inches='tight',
+            )
+        plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Model-free vs model-based comparison                                          #
+# --------------------------------------------------------------------------- #
+
+# Groups of related agents — base (model-free) first, then model-based variants
+_AGENT_FAMILIES = {
+    'TD3': ['td3', 'dense_td3', 'autoformer_td3'],
+    'PPO': ['ppo', 'dense_ppo', 'autoformer_ppo'],
+    'DDPG': ['ddpg', 'dense_ddpg', 'autoformer_ddpg'],
+}
+
+# Human-readable labels for display
+_AGENT_LABELS = {
+    'td3': 'TD3 (model-free)',
+    'dense_td3': 'Dense TD3',
+    'autoformer_td3': 'Autoformer TD3',
+    'ppo': 'PPO (model-free)',
+    'dense_ppo': 'Dense PPO',
+    'autoformer_ppo': 'Autoformer PPO',
+    'ddpg': 'DDPG (model-free)',
+    'dense_ddpg': 'Dense DDPG',
+    'autoformer_ddpg': 'Autoformer DDPG',
+}
+
+
+def _plot_model_free_vs_model_based(
+    results: dict,
+    trials: list,
+    dataset_name: str,
+    agents: list,
+    features: int,
+    out_dir: str,
+):
+    """Side-by-side panels comparing portfolio value for each algorithm family."""
+    _apply_paper_style()
+
+    families_to_plot = {
+        name: [a for a in members if a in agents]
+        for name, members in _AGENT_FAMILIES.items()
+    }
+    # Keep only families with ≥ 2 present agents
+    families_to_plot = {k: v for k, v in families_to_plot.items() if len(v) >= 2}
+
+    if not families_to_plot:
+        return
+
+    n_fam = len(families_to_plot)
+    fig, axes = plt.subplots(1, n_fam, figsize=(7 * n_fam, 5), squeeze=False)
+    fig.subplots_adjust(wspace=0.32, top=0.88, bottom=0.12)
+
+    for col, (family_name, family_agents) in enumerate(families_to_plot.items()):
+        ax = axes[0][col]
+
+        for i, agent in enumerate(family_agents):
+            color   = PALETTE[i % len(PALETTE)]
+            all_pv  = []
+
+            for trial in trials:
+                try:
+                    entry     = results[trial][dataset_name][agent]
+                    stock_dim = entry.get('stock_dim')
+                    for ep_states in entry['states']:
+                        pv = _portfolio_values_from_states(np.array(ep_states), features, stock_dim)
+                        all_pv.append(pv)
+                except (KeyError, IndexError):
+                    continue
+
+            if not all_pv:
+                continue
+
+            min_len    = min(len(x) for x in all_pv)
+            arr        = np.array([x[:min_len] for x in all_pv])
+            normalised = arr / arr[:, [0]] * 100
+            mean_pv    = normalised.mean(axis=0)
+            std_pv     = normalised.std(axis=0)
+            t          = np.arange(min_len)
+
+            label = _AGENT_LABELS.get(agent, agent)
+            ax.plot(t, mean_pv, color=color, label=label, linewidth=2.0, zorder=3)
+            if len(all_pv) > 1:
+                ax.fill_between(t, mean_pv - std_pv, mean_pv + std_pv, color=color, alpha=0.15)
+
+        ax.axhline(100, color='black', linestyle=':', linewidth=0.9, alpha=0.5)
+        ax.set_xlabel('Trading Day')
+        ax.set_ylabel('Portfolio Value (indexed, start = 100)')
+        ax.set_title(f'{family_name} Family', fontweight='bold')
+        ax.legend(loc='upper left', frameon=True)
+
+    fig.suptitle(
+        f'Model-Free vs Model-Based — {dataset_name}',
+        fontsize=13, fontweight='bold',
+    )
+    for ext in ('png', 'pdf'):
+        fig.savefig(
+            os.path.join(out_dir, f'{dataset_name}_model_comparison.{ext}'),
+            dpi=SAVE_DPI, bbox_inches='tight',
+        )
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
+# Action heatmap                                                                #
+# --------------------------------------------------------------------------- #
+
+def _plot_action_heatmap(
+    results: dict, trials: list, dataset_name: str, agents: list,
+    features: int, ticker_names: list, out_dir: str,
+):
+    _apply_paper_style()
+
+    # Collect agents that have non-empty actions
+    act_agents = [
+        a for a in agents
+        if any(len(results[t][dataset_name].get(a, {}).get('actions', [])) > 0
+               for t in trials)
+    ]
+    if not act_agents:
+        return
+
+    n_cols = len(act_agents)
+    fig, axes = plt.subplots(1, n_cols, figsize=(4.0 * n_cols, 4.5), squeeze=False)
+    fig.subplots_adjust(wspace=0.35, top=0.88, bottom=0.12)
+
+    for col, agent in enumerate(act_agents):
+        ax = axes[0][col]
+        all_actions = []
+        stock_dim = None
+        for trial in trials:
+            try:
+                entry    = results[trial][dataset_name][agent]
+                stock_dim = entry.get('stock_dim', features)
+                for ep_actions in entry['actions']:
+                    ep_arr = np.array(ep_actions)
+                    if ep_arr.ndim == 1:
+                        ep_arr = ep_arr.reshape(-1, 1)
+                    all_actions.append(ep_arr)
+            except (KeyError, IndexError):
+                continue
+        if not all_actions:
+            ax.set_visible(False)
+            continue
+
+        action_mat = np.concatenate(all_actions, axis=0).T   # (stock_dim, T)
+        n = stock_dim or action_mat.shape[0]
+        action_mat = action_mat[:n, :]
+        labels = [ticker_names[i] if i < len(ticker_names) else str(i) for i in range(n)]
+
+        im = ax.imshow(
+            action_mat, aspect='auto', cmap='RdYlGn',
+            vmin=-1, vmax=1, interpolation='nearest',
+        )
+        ax.set_yticks(range(n))
+        ax.set_yticklabels(labels, fontsize=7)
+        ax.set_xlabel('Trading Day')
+        ax.set_title(agent, fontsize=10, fontweight='bold')
+        plt.colorbar(im, ax=ax, fraction=0.03, pad=0.03,
+                     label='Action (−1=sell, +1=buy)')
+
+    fig.suptitle(f'Action Heatmap — {dataset_name}', fontsize=12, fontweight='bold')
+    for ext in ('png', 'pdf'):
+        fig.savefig(os.path.join(out_dir, f'{dataset_name}_action_heatmap.{ext}'),
+                    dpi=SAVE_DPI, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -646,6 +1246,56 @@ def create_performance_report(
         # ------------------------------------------------------------------ #
         _plot_predictions_vs_actual(
             results, trials, dataset_name, agents, features, ticker_names, output_dir
+        )
+
+        # ------------------------------------------------------------------ #
+        # 5. Rolling Sharpe ratio                                             #
+        # ------------------------------------------------------------------ #
+        _plot_rolling_sharpe(
+            results, trials, dataset_name, agents, features, output_dir
+        )
+
+        # ------------------------------------------------------------------ #
+        # 6. Daily return distribution                                        #
+        # ------------------------------------------------------------------ #
+        _plot_return_distribution(
+            results, trials, dataset_name, agents, features, output_dir
+        )
+
+        # ------------------------------------------------------------------ #
+        # 7. Prediction error over time                                       #
+        # ------------------------------------------------------------------ #
+        _plot_prediction_error(
+            results, trials, dataset_name, agents, features, ticker_names, output_dir
+        )
+
+        # ------------------------------------------------------------------ #
+        # 8. Predicted vs actual return scatter                               #
+        # ------------------------------------------------------------------ #
+        _plot_pred_scatter(
+            results, trials, dataset_name, agents, features, ticker_names, output_dir
+        )
+
+        # ------------------------------------------------------------------ #
+        # 9. Action heatmap                                                   #
+        # ------------------------------------------------------------------ #
+        _plot_action_heatmap(
+            results, trials, dataset_name, agents, features, ticker_names, output_dir
+        )
+
+        # ------------------------------------------------------------------ #
+        # 10. Actions vs price (per agent, 3 sampled assets)                  #
+        # ------------------------------------------------------------------ #
+        _plot_actions_vs_price(
+            results, trials, dataset_name, agents, features, ticker_names, output_dir,
+            n_samples=3,
+        )
+
+        # ------------------------------------------------------------------ #
+        # 11. Model-free vs model-based portfolio comparison                  #
+        # ------------------------------------------------------------------ #
+        _plot_model_free_vs_model_based(
+            results, trials, dataset_name, agents, features, output_dir
         )
 
         print(f'[create_performance_report] Saved outputs for "{dataset_name}" → {output_dir}')

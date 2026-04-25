@@ -94,7 +94,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
 
     def __init__(
         self,
-        policy: str | type[TD3Policy],
+        
         env: StockTradingEnv,
         dynamics_model: th.nn.Module,
         learning_rate: float | Schedule = 1e-3,
@@ -120,7 +120,8 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         seed: int | None = None,
         device: th.device | str = "auto",
         _init_setup_model: bool = True,
-        dynamics_kwargs: dict[str, Any] | None = None
+        _dynamics_kwargs: dict[str, Any] | None = None,
+        policy: str | type[TD3Policy] | None = ModelBasedTD3Policy,
     ):
         super().__init__(
             policy,
@@ -331,7 +332,6 @@ class ModelBasedTD3(OffPolicyAlgorithm):
 
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
-            critic_loss = th.Tensor(critic_loss)
             assert isinstance(critic_loss, th.Tensor)
             critic_losses.append(critic_loss.item())
 
@@ -405,7 +405,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         return state_dicts, []
     
     def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale = True):
-        reshape_and_scale = lambda transform, _x, shape: th.Tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().numpy())).reshape(shape[0], shape[1], shape[2]).to(_x.device)
+        reshape_and_scale = lambda transform, _x, shape: th.tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().cpu().numpy()), dtype=th.float32, device=_x.device).reshape(shape[0], shape[1], shape[2])
 
         if self.dynamics_model.args.scale and scale:
 
@@ -466,8 +466,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
 
         assert not isinstance(observation, dict), 'breakpoint for when observation in predict is dict, i dont think it should be a dict for finrl stockenvs'
         # pred = pred.flatten(1)
-        x = np.concatenate((th.tensor(observation), prediction), axis=1)
-        # x = th.cat((observation, pred.flatten(1)), 1).squeeze()
+        x = np.concatenate((observation, prediction.cpu().numpy()), axis=1)
         a, b = self.policy.predict(x, None, None, deterministic)
 
         if len(a.shape) == 1:

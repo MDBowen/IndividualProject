@@ -16,8 +16,9 @@ from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 from finrl.agents.stablebaselines3.models import DRLAgent
 # from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
-from agents.basicStrategies import BuyAndHold, PredictionSignStrategy
+from agents.basicStrategies import BuyAndHold, PredictionSignStrategy, TopKStrategy
 from agents.modelbased_TD3.mode_based_TD3 import ModelBasedTD3
+from agents.modelbased_PPO.model_based_PPO import ModelBasedPPO
 
 from utils.custom_callback import CustomCallback
 from utils.evaluation import evaluate_model
@@ -28,9 +29,9 @@ from enviroments.test_env_stocktrading import StockTradingEnv
 
 from models.train_autoformer import train_autoformer_from_finrl
 
-predictor_agents = ['dense_predictor', 'autoformer_predictor']
+predictor_agents = ['dense_predictor', 'autoformer_predictor','autoformer_topK']
 basic_agents = ['buy_and_hold']
-model_based_agents = ['dense_td3', 'autoformer_td3']
+model_based_agents = ['dense_td3', 'autoformer_td3','autoformer_ppo']
 model_free_agents = ['ddpg','ppo','td3']
 
 def get_data(train_start, train_end, val_end, test_end, tickers, indicators = None, data_path = 'data/datasets'):
@@ -90,7 +91,7 @@ def train_agentic_model(model, env, timesteps, eval_callback = None):
     env: Stable Baselines3 environment
     val: pd.DataFrame with same format as train_data, used for validation during training
     '''
-    model.learn(total_timesteps=timesteps, log_interval=1, callback=eval_callback)
+    model.learn(total_timesteps=timesteps, log_interval=100, callback=eval_callback)
     return model
 
 
@@ -161,18 +162,19 @@ def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_
 
     env = StockTradingEnv(df = train, **env_kwargs)
     env_train, _ = env.get_sb_env()
-    agent_kwargs['dynamics_kwargs']['feature_dim'] = len(tickers)
+    agent_kwargs['_dynamics_kwargs']['feature_dim'] = len(tickers)
 
 
-    dynamics_model = get_dynamics_model(agent_kwargs['dynamics_kwargs'])
+    dynamics_model = get_dynamics_model(agent_kwargs['_dynamics_kwargs'])
 
     dynamics_model = train_dynamics_model(dynamics_model, pred_train, val=agent_train)
 
+
+
     model = agent_class(
-            policy="ModelBasedMLP",
+            
             env=env_train,
             dynamics_model=dynamics_model,
-            learning_starts = 150,
             tensorboard_log=None,
             verbose=1,
             policy_kwargs=None,
@@ -213,7 +215,7 @@ def train_predictor_agent(agent_name, agent_class, timesteps, train, val, env_kw
     env = StockTradingEnv(df = train, **env_kwargs)
     env_train, _ = env.get_sb_env()
 
-    dynamics_model = get_dynamics_model(agent_kwargs['dynamics_kwargs'])
+    dynamics_model = get_dynamics_model(agent_kwargs['_dynamics_kwargs'])
     dynamics_model = train_dynamics_model(dynamics_model, train, val=val)
 
     return agent_class(dynamics_model, env_kwargs['hmax'], stock_dimension)
@@ -222,28 +224,27 @@ def get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs):
     # Implementation for getting a basic agent (e.g. Buy and Hold)
     return agent_class(env_kwargs['stock_dim'], device = 'cuda' if torch.cuda.is_available() else 'cpu')
 
-def test_agent(agent, test_set, uses_predictor = False, env_kwargs = None):
-    # Implementation for testing an agent
+def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=None):
 
-    env = StockTradingEnv(df = test_set, **env_kwargs)
+    env = StockTradingEnv(df=test_set, **env_kwargs)
     env_test, _ = env.get_sb_env()
 
-    rewards, actions, observations, predictions, trues = evaluate_model(agent, 
-                                                                        env_test,
-                                                                        n_eval_episodes=3, 
-                                                                        uses_predictor=uses_predictor
-                                                                        )
-    
-    results = {
+    rewards, actions, observations, predictions, trues = evaluate_model(
+        agent,
+        env_test,
+        n_eval_episodes=3,
+        uses_predictor=uses_predictor,
+    )
+
+    return {
         'rewards': rewards,
         'actions': actions,
         'states': observations,
         'predictions': predictions,
         'actuals': trues,
         'stock_dim': env_kwargs['stock_dim'],
+        'tickers': list(tickers) if tickers is not None else None,
     }
-    
-    return results
 
 def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs = None, agents_kwargs = None, indicators = []):
 
@@ -267,7 +268,7 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
 
                 results[trials][data_name][agent_name] = {}
 
-                print(f'\n Running agent {agent_name} on dataset {data_name} with {tic} having {train["date"].nunique()} trading days {train["date"].duplicated().any()} \n')
+                print(f'\n Running agent {agent_name} on dataset {data_name} with {tic} having {train["date"].nunique()} trading days \n')
 
                 agent_kwargs = agents_kwargs[agent_name]
 
@@ -302,10 +303,13 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                 else:
                     raise ValueError(f"Can't find agent {agent_name}")
                     
-                results[trials][data_name][agent_name] = test_agent(agent, 
-                                                                    test, 
-                                                                    not agent_name in model_free_agents+basic_agents, 
-                                                                    env_kwargs = env_kwargs)
+                results[trials][data_name][agent_name] = test_agent(
+                    agent,
+                    test,
+                    uses_predictor=agent_name not in model_free_agents + basic_agents,
+                    env_kwargs=env_kwargs,
+                    tickers=tic,
+                )
                 
     create_performance_report(results, dataset)
     
@@ -330,6 +334,12 @@ if __name__ == '__main__':
         type=int,
         default=10,
         help='Assets randomly sampled from the market universe each trial (default: 10)',
+    )
+    parser.add_argument(
+        '--model_epochs',
+        type = int, 
+        default=10,
+        help='Number of training epochs for dynamics models',
     )
     args = parser.parse_args()
 
@@ -356,8 +366,18 @@ if __name__ == '__main__':
               'td3': None, 'ppo': None,
               'dense_predictor': PredictionSignStrategy, 
               'autoformer_predictor': PredictionSignStrategy,
-              'autoformer_td3': ModelBasedTD3, }
-    
+              'autoformer_td3': ModelBasedTD3,
+              'autoformer_ppo':ModelBasedPPO }
+
+    agents = {
+              'buy_and_hold': BuyAndHold, 
+              'dense_td3': ModelBasedTD3,
+              'td3': None, 'ppo': None,
+              'dense_predictor': PredictionSignStrategy, 
+              'autoformer_predictor': PredictionSignStrategy,
+            #   'autoformer_td3': ModelBasedTD3,
+            # 'autoformer_ppo':ModelBasedPPO,
+            'autoformer_topK': TopKStrategy }
     # agents = {
     #             'buy_and_hold': BuyAndHold, 
     #           'dense_predictor': PredictionSignStrategy, 
@@ -385,23 +405,31 @@ if __name__ == '__main__':
 
     agents_kwargs = {
         'ppo': {
-            "n_steps": 2048,
+            "n_steps": min(2048, timesteps),
             "ent_coef": 0.01,
             "learning_rate": 0.00025,
-            "batch_size": 128,
+            "batch_size": min(128, timesteps),
         },
-        'td3': {"batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001},
+        'td3': {"batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150},
         'autoformer_td3': {
-            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001,
-            "dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1},
+            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1},
         },
         'dense_td3': {
-            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001,
-            "dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
+            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
+            "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
         },
-        'dense_predictor': {"dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
-        'autoformer_predictor': {"dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}},
-        'buy_and_hold': {"dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
+        'dense_predictor': {"_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
+        'autoformer_predictor': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}},
+        'buy_and_hold': {"_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
+        'autoformer_ppo': {
+            "n_steps": min(2048, timesteps),
+            "ent_coef": 0.01,
+            "learning_rate": 0.00025,
+            "batch_size": min(128, timesteps),
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}
+        },
+        'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}}
     }
 
     all_tickers = {'sp100': all_tickers['sp100']}

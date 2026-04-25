@@ -240,7 +240,7 @@ def autoformer_evaluate_policy(
             deterministic=deterministic,
         )
         if isinstance(actions, th.Tensor):
-            actions = np.array(actions.detach().numpy())
+            actions = actions.detach().cpu().numpy()
         new_observations, rewards, dones, infos = env.step(actions)
         current_rewards += rewards
         current_lengths += 1

@@ -132,3 +132,37 @@ class PredictionSignStrategy(PredictorStrategy):
     def strategy_func(self, prediciton, price):
         action = np.sign(prediciton - price)
         return action
+    
+class TopKStrategy(PredictorStrategy):
+    def __init__(self, dynamics_model, hmax, feature_len, k=3, scaler=None, pred_idx=0, device='cpu'):
+        super().__init__(dynamics_model, hmax, feature_len, scaler=scaler, pred_idx=pred_idx, device=device)
+        self.k = k
+
+    def strategy_func(self, prediction: np.ndarray, price: np.ndarray) -> np.ndarray:
+        safe_price = np.where(price != 0, price, 1e-8)
+        pred_return = (prediction - safe_price) / safe_price   # (1, feature_len)
+
+        flat = pred_return.flatten()
+        n = len(flat)
+        k = min(self.k, n // 2)   # cap so buy/sell sets never overlap
+
+        action = np.zeros(n, dtype=np.float32)
+        if k > 0:
+            ranked = np.argsort(flat)
+            action[ranked[-k:]] =  1.0   # top-k → buy
+            action[ranked[:k]]  = -1.0   # bottom-k → sell
+
+        return action.reshape(pred_return.shape)
+    
+class VolatilityScaledStrategy(PredictorStrategy):
+    def __init__(self, dynamics_model, hmax, feature_len, scaler=None, pred_idx=0, device='cpu'):
+        super().__init__(dynamics_model, hmax, feature_len, scaler=scaler, pred_idx=pred_idx, device=device)
+
+    def rolling_volatility(self, price: np.ndarray, window: int = 20) -> np.ndarray:
+        """
+        price shape: (T, N) — T timesteps, N assets
+        returns vol shape: (N,) — annualised vol at the last timestep
+        """
+        returns = np.diff(price, axis=0) / price[:-1]   # (T-1, N)
+        vol = returns[-window:].std(axis=0)              # std over last `window` days
+        return vol * np.sqrt(252)                        # annualise
