@@ -82,7 +82,7 @@ class PredictorStrategy():
         return pred.detach().cpu().numpy()
 
     def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale = True):
-        reshape_and_scale = lambda transform, _x, shape: th.Tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().numpy())).reshape(shape[0], shape[1], shape[2]).to(_x.device)
+        reshape_and_scale = lambda transform, _x, shape: th.tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().cpu().numpy()), dtype=th.float32, device=_x.device).reshape(shape[0], shape[1], shape[2])
 
         if self.dynamics_model.args.scale and scale:
 
