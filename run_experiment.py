@@ -129,6 +129,12 @@ def train_model_free_agent(agent_name, agent_class, timesteps, train, val, env_k
     model = DRLAgent(env_train).get_model(agent_name, model_kwargs = agent_kwargs)
 
     cb = callback_kwargs or {}
+    # For on-policy agents (PPO) n_steps steps must be collected before the
+    # first policy update, so evaluating before that point always sees an
+    # untrained policy and early-stopping kills training immediately.
+    # Clamp eval_freq to be at least n_steps.
+    n_steps = agent_kwargs.get('n_steps', 1)
+    eval_freq = max(cb.get('eval_freq', 50), n_steps)
     stop_cb = StopTrainingOnNoModelImprovement(
         max_no_improvement_evals=cb.get('max_no_improvement_evals', 10),
         min_evals=cb.get('min_evals', 5),
@@ -140,7 +146,7 @@ def train_model_free_agent(agent_name, agent_class, timesteps, train, val, env_k
         best_model_save_path=f'./logs/{agent_name}/',
         log_path=f'./logs/{agent_name}/',
         n_eval_episodes=cb.get('n_eval_episodes', 5),
-        eval_freq=cb.get('eval_freq', 50),
+        eval_freq=eval_freq,
         deterministic=True,
         render=False,
         verbose=cb.get('verbose', 1),
@@ -206,6 +212,8 @@ def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_
     val_env, _ = _env.get_sb_env()
 
     cb = callback_kwargs or {}
+    n_steps = agent_kwargs.get('n_steps', 1)
+    eval_freq = max(cb.get('eval_freq', 50), n_steps)
     stop_cb = StopTrainingOnNoModelImprovement(
         max_no_improvement_evals=cb.get('max_no_improvement_evals', 10),
         min_evals=cb.get('min_evals', 5),
@@ -217,7 +225,7 @@ def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_
         best_model_save_path=f'./logs/{agent_name}/',
         log_path=f'./logs/{agent_name}/',
         n_eval_episodes=cb.get('n_eval_episodes', 5),
-        eval_freq=cb.get('eval_freq', 50),
+        eval_freq=eval_freq,
         deterministic=True,
         render=False,
         verbose=cb.get('verbose', 1),
