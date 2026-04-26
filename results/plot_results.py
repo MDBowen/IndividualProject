@@ -480,9 +480,13 @@ def _plot_predictions_vs_actual(
             ax = axes[row][col]
             ticker = sampled_ticker_names[asset_idx] if asset_idx < len(sampled_ticker_names) else str(asset_idx)
 
-            # Collect actual & prediction over trials; each is a list of per-episode arrays
+            # Each trial uses a different random stock subset, so asset_idx
+            # refers to a different company each time. Normalize each trial's
+            # series to relative price (divide by the first actual value so
+            # every series starts at 1.0) before averaging, making the
+            # comparison scale-independent across different stocks.
             all_preds = []
-            actuals_ref = None
+            all_acts  = []
             for trial in trials:
                 try:
                     ep_preds = results[trial][dataset_name][agent]['predictions']
@@ -494,36 +498,45 @@ def _plot_predictions_vs_actual(
                         pred = pred[:, 0, 0, :]
                     elif pred.ndim == 3:
                         pred = pred[:, 0, :]
-                    all_preds.append(pred[:, asset_idx])
-                    if actuals_ref is None:
-                        actuals_ref = act[:, asset_idx] if act.ndim == 2 else act
+                    act_col  = act[:, asset_idx] if act.ndim == 2 else act
+                    pred_col = pred[:, asset_idx]
+                    base = act_col[0]
+                    if base == 0:
+                        continue
+                    all_acts.append(act_col  / base)
+                    all_preds.append(pred_col / base)
                 except (KeyError, IndexError, ValueError):
                     continue
 
-            if actuals_ref is None or not all_preds:
+            if not all_acts or not all_preds:
                 ax.set_visible(False)
                 continue
 
-            t_end = max_steps if max_steps else len(actuals_ref)
+            t_end = max_steps if max_steps else min(len(a) for a in all_acts)
             t     = np.arange(t_end)
 
             all_preds_arr = np.array([p[:t_end] for p in all_preds])
             mean_pred = all_preds_arr.mean(axis=0)
             std_pred  = all_preds_arr.std(axis=0)
 
-            actual_vals = actuals_ref[:t_end]
-            ax.plot(t, actual_vals, color='#2c3e50', linewidth=1.4,
+            all_acts_arr = np.array([a[:t_end] for a in all_acts])
+            mean_act = all_acts_arr.mean(axis=0)
+            std_act  = all_acts_arr.std(axis=0)
+
+            ax.plot(t, mean_act, color='#2c3e50', linewidth=1.4,
                     label='Actual', zorder=4)
+            if len(trials) > 1:
+                ax.fill_between(t, mean_act - std_act, mean_act + std_act,
+                                color='#2c3e50', alpha=0.12)
             ax.plot(t, mean_pred, color=agent_color, linewidth=1.4,
                     linestyle='--', label=f'{agent} prediction', zorder=3)
             if len(trials) > 1:
                 ax.fill_between(t, mean_pred - std_pred, mean_pred + std_pred,
                                 color=agent_color, alpha=0.2)
 
-            # Pin y-axis to ±30 % of actual price range so off-scale predictions
-            # don't crush the actual price line
-            a_min, a_max = float(np.nanmin(actual_vals)), float(np.nanmax(actual_vals))
-            margin = max((a_max - a_min) * 0.30, a_max * 0.05)
+            # Pin y-axis around the actual range with a margin
+            a_min, a_max = float(np.nanmin(mean_act)), float(np.nanmax(mean_act))
+            margin = max((a_max - a_min) * 0.30, 0.05)
             ax.set_ylim(a_min - margin, a_max + margin)
 
             ax.set_title(f'{ticker}  [{agent}]', fontsize=9)
@@ -533,7 +546,7 @@ def _plot_predictions_vs_actual(
             if row == n_rows - 1:
                 ax.set_xlabel('Trading Day')
             if col == 0:
-                ax.set_ylabel('Price ($)')
+                ax.set_ylabel('Relative Price (base = 1)')
 
     # Shared legend — collect unique entries from all axes
     handles, labels = [], []
@@ -726,7 +739,7 @@ def _plot_prediction_error(
         for row, asset_idx in enumerate(sampled_idx):
             ax = axes[row][col]
             ticker = ticker_names[asset_idx] if asset_idx < len(ticker_names) else str(asset_idx)
-            all_mae = []
+            all_mape = []
             for trial in trials:
                 try:
                     preds   = results[trial][dataset_name][agent]['predictions']
@@ -735,17 +748,25 @@ def _plot_prediction_error(
                     a = np.concatenate(actuals, axis=0)
                     if p.ndim == 4: p = p[:, 0, 0, :]
                     elif p.ndim == 3: p = p[:, 0, :]
-                    mae_series = np.abs(p[:, asset_idx] - a[:, asset_idx])
-                    # rolling window
-                    rolling = np.convolve(mae_series, np.ones(window) / window, mode='valid')
-                    all_mae.append(rolling)
+                    a_col = a[:, asset_idx]
+                    p_col = p[:, asset_idx]
+                    # Relative error (MAPE per step) so different stocks across
+                    # trials are on the same scale before averaging
+                    safe_a = np.where(a_col != 0, a_col, np.nan)
+                    mape_series = np.abs((p_col - a_col) / safe_a) * 100
+                    rolling = np.convolve(
+                        np.nan_to_num(mape_series),
+                        np.ones(window) / window,
+                        mode='valid',
+                    )
+                    all_mape.append(rolling)
                 except (KeyError, IndexError, ValueError):
                     continue
-            if not all_mae:
+            if not all_mape:
                 ax.set_visible(False)
                 continue
-            min_len = min(len(m) for m in all_mae)
-            arr  = np.array([m[:min_len] for m in all_mae])
+            min_len = min(len(m) for m in all_mape)
+            arr  = np.array([m[:min_len] for m in all_mape])
             mean = arr.mean(axis=0)
             std  = arr.std(axis=0)
             t = np.arange(min_len)
@@ -755,7 +776,7 @@ def _plot_prediction_error(
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             if row == n_assets - 1: ax.set_xlabel('Trading Day')
-            if col == 0: ax.set_ylabel(f'{window}d Rolling MAE')
+            if col == 0: ax.set_ylabel(f'{window}d Rolling MAPE (%)')
 
     fig.suptitle(f'Prediction Error Over Time — {dataset_name}',
                  fontsize=12, fontweight='bold', y=1.02)
@@ -812,14 +833,17 @@ def _plot_pred_scatter(
                     a = np.concatenate(actuals, axis=0)
                     if p.ndim == 4: p = p[:, 0, 0, :]
                     elif p.ndim == 3: p = p[:, 0, :]
-                    # 1-step predicted return vs actual return
                     p_col = p[:, asset_idx]
                     a_col = a[:, asset_idx]
-                    # shift: pred at t vs actual change from t to t+1
-                    pred_ret = np.diff(p_col)
-                    act_ret  = np.diff(a_col)
-                    all_pred_ret.append(pred_ret)
-                    all_act_ret.append(act_ret)
+                    # Use percentage returns so different stocks across trials
+                    # are on the same scale before pooling
+                    safe_p = np.where(p_col[:-1] != 0, p_col[:-1], np.nan)
+                    safe_a = np.where(a_col[:-1] != 0, a_col[:-1], np.nan)
+                    pred_ret = np.diff(p_col) / safe_p
+                    act_ret  = np.diff(a_col) / safe_a
+                    mask = np.isfinite(pred_ret) & np.isfinite(act_ret)
+                    all_pred_ret.append(pred_ret[mask])
+                    all_act_ret.append(act_ret[mask])
                 except (KeyError, IndexError, ValueError):
                     continue
             if not all_pred_ret:
@@ -849,8 +873,8 @@ def _plot_pred_scatter(
             ax.set_title(f'{ticker}  [{agent}]', fontsize=8)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            if row == n_assets - 1: ax.set_xlabel('Predicted Δ')
-            if col == 0: ax.set_ylabel('Actual Δ')
+            if row == n_assets - 1: ax.set_xlabel('Predicted Return')
+            if col == 0: ax.set_ylabel('Actual Return')
 
     fig.suptitle(f'Predicted vs Actual Price Change — {dataset_name}',
                  fontsize=12, fontweight='bold', y=1.02)
@@ -1203,7 +1227,12 @@ def create_performance_report(
                         p = p[:, 0, 0, :]
                     elif p.ndim == 3:
                         p = p[:, 0, :]
-                    trial_pred.append(_compute_prediction_metrics(p, a))
+                    # Normalise to relative price (base = first actual) so that
+                    # MAE/RMSE are in relative units and comparable across trials
+                    # whose stock subsets differ in absolute price level.
+                    base = a[0:1, :]
+                    safe_base = np.where(base != 0, base, 1.0)
+                    trial_pred.append(_compute_prediction_metrics(p / safe_base, a / safe_base))
 
             if trial_fin:
                 # Average each metric across trials
