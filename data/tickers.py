@@ -109,7 +109,6 @@ sp100_tickers = [
     "XOM",    # Exxon Mobil Corp
 ]
 
-print(f"S&P 100 total tickers: {len(sp100_tickers)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -222,7 +221,6 @@ nasdaq100_tickers = [
     "ALGN",   # Align Technology
 ]
 
-print(f"Nasdaq 100 total tickers: {len(nasdaq100_tickers)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -336,7 +334,6 @@ csi100_tickers = [
     "600015.SS",  # Hua Xia Bank - Financials
 ]
 
-print(f"CSI 100 total tickers: {len(csi100_tickers)}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Combined helper

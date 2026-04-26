@@ -18,7 +18,7 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr = lr_adjust[epoch]
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-        print('Updating learning rate to {}'.format(lr))
+        pass
 
 
 class EarlyStopping:
@@ -38,7 +38,6 @@ class EarlyStopping:
             self.save_checkpoint(val_loss, model, path)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:

@@ -31,7 +31,7 @@ from models.train_autoformer import train_autoformer_from_finrl
 
 predictor_agents = ['dense_predictor', 'autoformer_predictor','autoformer_topK']
 basic_agents = ['buy_and_hold']
-model_based_agents = ['dense_td3', 'autoformer_td3','autoformer_ppo']
+model_based_agents = ['dense_td3', 'dense_ppo', 'autoformer_td3','autoformer_ppo']
 model_free_agents = ['ddpg','ppo','td3']
 
 def get_data(train_start, train_end, val_end, test_end, tickers, indicators = None, data_path = 'data/datasets'):
@@ -300,7 +300,7 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
 
         for trials in range(1, number_of_trials+1):
 
-            results[trials] = {}
+            results.setdefault(trials, {})
             results[trials][data_name] = {}
 
             train, val, test, tic = sample_tickers(train_set, val_set, test_set, tickers, assets_per_ep)
@@ -455,6 +455,7 @@ if __name__ == '__main__':
     agents = {
               'buy_and_hold': BuyAndHold, 
               'dense_td3': ModelBasedTD3,
+              'dense_ppo':ModelBasedPPO,
               'td3': None, 'ppo': None,
               'dense_predictor': PredictionSignStrategy, 
               'autoformer_predictor': PredictionSignStrategy,
@@ -509,6 +510,13 @@ if __name__ == '__main__':
         },
         'dense_td3': {
             "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
+            "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
+        },
+        'dense_ppo': {
+            "n_steps": min(2048, timesteps),
+            "ent_coef": 0.01,
+            "learning_rate": 0.00025,
+            "batch_size": min(128, timesteps),
             "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
         },
         'dense_predictor': {"_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},

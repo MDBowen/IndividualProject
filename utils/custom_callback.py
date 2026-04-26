@@ -29,17 +29,18 @@ class CustomCallback(EvalCallback):
         render: bool = False,
         verbose: int = 1,
         warn: bool = True,):
-        super(CustomCallback, self).__init__(eval_env, 
-                                             callback_on_new_best, 
-                                             callback_after_eval, 
-                                             n_eval_episodes, 
-                                             eval_freq, 
+        super(CustomCallback, self).__init__(eval_env,
+                                             callback_on_new_best,
+                                             callback_after_eval,
+                                             n_eval_episodes,
+                                             eval_freq,
                                              log_path,
                                              best_model_save_path,
                                              deterministic,
-                                             render, 
+                                             render,
                                              verbose,
                                              warn)
+        self._eval_count = 0
 
     '''Custom callback to use dates for our predictors'''
 
@@ -47,6 +48,7 @@ class CustomCallback(EvalCallback):
         continue_training = True
 
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+            self._eval_count += 1
             # Sync training and eval env if there is VecNormalize
             if self.model.get_vec_normalize_env() is not None:
                 try:
@@ -94,20 +96,23 @@ class CustomCallback(EvalCallback):
                 )
 
             mean_reward, std_reward = np.mean(episode_rewards), np.std(episode_rewards)
-            mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(episode_lengths)
+            mean_ep_length = np.mean(episode_lengths)
             self.last_mean_reward = float(mean_reward)
 
             if self.verbose >= 1:
-                print(f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
-                print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
+                best_tag = "  ★ new best" if mean_reward > self.best_mean_reward else ""
+                print(
+                    f"Eval [{self._eval_count}] "
+                    f"t={self.num_timesteps}  "
+                    f"reward={mean_reward:.2f}±{std_reward:.2f}  "
+                    f"ep_len={mean_ep_length:.0f}{best_tag}"
+                )
             # Add to current Logger
             self.logger.record("eval/mean_reward", float(mean_reward))
             self.logger.record("eval/mean_ep_length", mean_ep_length)
 
             if len(self._is_success_buffer) > 0:
                 success_rate = np.mean(self._is_success_buffer)
-                if self.verbose >= 1:
-                    print(f"Success rate: {100 * success_rate:.2f}%")
                 self.logger.record("eval/success_rate", success_rate)
 
             # Dump log so the evaluation results are printed with the correct timestep
@@ -115,8 +120,6 @@ class CustomCallback(EvalCallback):
             self.logger.dump(self.num_timesteps)
 
             if mean_reward > self.best_mean_reward:
-                if self.verbose >= 1:
-                    print("New best mean reward!")
                 if self.best_model_save_path is not None:
                     self.model.save(os.path.join(self.best_model_save_path, "best_model"))
                 self.best_mean_reward = float(mean_reward)
