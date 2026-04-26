@@ -58,8 +58,9 @@ def get_data(train_start, train_end, val_end, test_end, tickers, indicators = No
 
 def get_dynamics_model(model_kwargs):
     from models.get_model import get_model
-    print(f'Getting dynamics model {model_kwargs.get("model_name")} with kwargs {model_kwargs}')
-    return get_model(**model_kwargs)        
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f'Getting dynamics model {model_kwargs.get("model_name")} with kwargs {model_kwargs} on {device}')
+    return get_model(**model_kwargs)
 
 def sample_tickers(train_set, val_set, test_set, tickers, assets_per_ep):
 
@@ -91,6 +92,7 @@ def train_agentic_model(model, env, timesteps, eval_callback = None):
     env: Stable Baselines3 environment
     val: pd.DataFrame with same format as train_data, used for validation during training
     '''
+    print(f'Training RL agent on {model.device}')
     model.learn(total_timesteps=timesteps, log_interval=100, callback=eval_callback)
     return model
 

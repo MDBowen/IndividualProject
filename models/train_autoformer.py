@@ -468,6 +468,9 @@ def train_autoformer_from_finrl(
     path = os.path.join(args.checkpoints, f"{args.model}_{setting}")
     os.makedirs(path, exist_ok=True)
 
+    print(f'Training {args.model} dynamics model on {model.device}  '
+          f'({len(train_ds)} train samples, {len(val_ds)} val samples)')
+
     optimizer  = model._select_optimizer()
     criterion  = model._select_criterion()
     early_stop = EarlyStopping(patience=args.patience, verbose=False)
