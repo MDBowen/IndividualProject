@@ -437,7 +437,7 @@ if __name__ == '__main__':
 
     print(
         f'Config — n_trials={n_trials}  timesteps={timesteps}  assets_per_ep={assets_per_ep}  '
-        f'eval_freq={timesteps // args.eval_num,}  n_eval_episodes={args.n_eval_episodes}  '
+        f'eval_freq={timesteps // args.eval_num}  n_eval_episodes={args.n_eval_episodes}  '
         f'max_no_improvement_evals={args.max_no_improvement_evals}  min_evals={args.min_evals}'
     )
 
@@ -461,16 +461,16 @@ if __name__ == '__main__':
               'autoformer_td3': ModelBasedTD3,
               'autoformer_ppo':ModelBasedPPO }
 
-    agents = {
-              'buy_and_hold': BuyAndHold, 
-              'dense_td3': ModelBasedTD3,
-              'td3': None, 'ppo': None,
-              'dense_predictor': PredictionSignStrategy, 
-              'autoformer_predictor': PredictionSignStrategy,
-            #   'autoformer_td3': ModelBasedTD3,
-            # 'autoformer_ppo':ModelBasedPPO,
-            'autoformer_topK': TopKStrategy }
     # agents = {
+    #           'buy_and_hold': BuyAndHold, 
+    #           'dense_td3': ModelBasedTD3,
+    #           'td3': None, 'ppo': None,
+    #           'dense_predictor': PredictionSignStrategy, 
+    #           'autoformer_predictor': PredictionSignStrategy,
+    #         #   'autoformer_td3': ModelBasedTD3,
+    #         # 'autoformer_ppo':ModelBasedPPO,
+    #         'autoformer_topK': TopKStrategy }
+    # # agents = {
     #             'buy_and_hold': BuyAndHold, 
     #           'dense_predictor': PredictionSignStrategy, 
     #           'td3': None,
@@ -505,23 +505,23 @@ if __name__ == '__main__':
         'td3': {"batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150},
         'autoformer_td3': {
             "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
-            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1},
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
         },
         'dense_td3': {
             "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
             "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
         },
         'dense_predictor': {"_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
-        'autoformer_predictor': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}},
+        'autoformer_predictor': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}},
         'buy_and_hold': {"_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
         'autoformer_ppo': {
             "n_steps": min(2048, timesteps),
             "ent_coef": 0.01,
             "learning_rate": 0.00025,
             "batch_size": min(128, timesteps),
-            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}
         },
-        'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": 1}}
+        'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}}
     }
 
     if args.only_sp100:
