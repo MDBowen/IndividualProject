@@ -397,9 +397,6 @@ class CustomReplayBuffer(BaseBuffer):
             ]), env)
 
         reshape = lambda x: x[:, :, 1:1+self.price_dims]
-        for arr in [x, y, next_x, next_y]:
-            arr = reshape(arr)
-
         x, y, next_x, next_y = tuple(map(reshape, [x, y, next_x, next_y]))
 
         pred_x = th.tensor(x, dtype=th.float32, device=self.device)

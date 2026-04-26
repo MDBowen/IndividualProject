@@ -388,24 +388,17 @@ class ModelBasedPPO(OnPolicyAlgorithm):
         )
     
 
-    def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale = True):
-        reshape_and_scale = lambda transform, _x, shape: th.tensor(transform(_x.reshape(shape[0] * shape[1], shape[2]).detach().cpu().numpy()), dtype=th.float32, device=_x.device).reshape(shape[0], shape[1], shape[2])
-
+    def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale=True):
         if self.dynamics_model.args.scale and scale:
-
-            batches = x.shape[0]
-            window_x = x.shape[1]
-            window_y = y.shape[1]
-            feature_dim_x = x.shape[2]
-            feature_dim_y = y.shape[2]
-
-            x = reshape_and_scale(self.dynamics_model.scaler.transform, x, (batches, window_x, feature_dim_x))
-            y = reshape_and_scale(self.dynamics_model.scaler.transform, y, (batches, window_y, feature_dim_y))
+            mean_v  = self.dynamics_model.mean_t.to(x.device)
+            std_v   = self.dynamics_model.scale_t.to(x.device)
+            x = (x - mean_v) / std_v
+            y = (y - mean_v) / std_v
 
         pred, y = self.dynamics_model._predict(x, y, x_mark, y_mark)
 
         if self.dynamics_model.args.scale and scale:
-            pred = reshape_and_scale(self.dynamics_model.scaler.inverse_transform, pred, pred.shape)
+            pred = pred * std_v + mean_v
 
         return pred, y
     

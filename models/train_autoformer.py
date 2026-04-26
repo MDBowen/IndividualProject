@@ -264,12 +264,14 @@ def train_autoformer(
         scaler=train_ds.scaler,
     )
 
+    _nw  = min(4, os.cpu_count() or 1)
+    _pin = torch.cuda.is_available()
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              drop_last=True, num_workers=0)
+                              drop_last=True,  num_workers=_nw, pin_memory=_pin)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
-                              drop_last=False, num_workers=0)
+                              drop_last=False, num_workers=_nw, pin_memory=_pin)
     test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False,
-                              drop_last=False, num_workers=0)
+                              drop_last=False, num_workers=_nw, pin_memory=_pin)
 
     # ---- config ---------------------------------------------------------- #
     args, _ = get_train_config()
@@ -304,7 +306,9 @@ def train_autoformer(
 
     # ---- build model ----------------------------------------------------- #
     exp = Exp_Main(args)
-    exp.scaler = train_ds.scaler
+    exp.scaler  = train_ds.scaler
+    exp.mean_t  = torch.tensor(train_ds.scaler.mean_,  dtype=torch.float32)
+    exp.scale_t = torch.tensor(train_ds.scaler.scale_, dtype=torch.float32)
 
     # ---- training loop --------------------------------------------------- #
     # We implement the loop here directly rather than calling exp.train() with
@@ -448,13 +452,17 @@ def train_autoformer_from_finrl(
         scaler=train_ds.scaler,   # reuse train scaler — no data leakage
     )
 
+    _nw  = min(4, os.cpu_count() or 1)
+    _pin = torch.cuda.is_available()
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True,  drop_last=True,  num_workers=0)
+                              shuffle=True,  drop_last=True,  num_workers=_nw, pin_memory=_pin)
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              shuffle=False, drop_last=False, num_workers=0)
+                              shuffle=False, drop_last=False, num_workers=_nw, pin_memory=_pin)
 
-    # Expose the scaler so callers can invert-transform predictions later
-    model.scaler = train_ds.scaler
+    # Expose the scaler and its parameters as GPU-ready tensors
+    model.scaler  = train_ds.scaler
+    model.mean_t  = torch.tensor(train_ds.scaler.mean_,  dtype=torch.float32)
+    model.scale_t = torch.tensor(train_ds.scaler.scale_, dtype=torch.float32)
 
     # --- 3. Training loop --------------------------------------------------- #
     path = os.path.join(args.checkpoints, f"{args.model}_{setting}")
