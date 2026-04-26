@@ -1306,6 +1306,7 @@ def create_performance_report(
 # --------------------------------------------------------------------------- #
 
 def plot_results(results, tickers):
+    os.makedirs(save_graphs, exist_ok=True)
 
     datasets = list(results[1].keys())
     trials = list(results.keys())

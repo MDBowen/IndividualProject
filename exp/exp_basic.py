@@ -23,6 +23,11 @@ class Exp_Basic(object):
             print('Use CPU')
         return device
 
+    def to(self, device):
+        self.device = device
+        self.model = self.model.to(device)
+        return self
+
     def _get_data(self):
         pass
 
