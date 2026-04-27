@@ -173,12 +173,6 @@ class ModelBasedPPO(OnPolicyAlgorithm):
         self.dynamics_model_optim = self.dynamics_model._select_optimizer()
         self.dynamics_model_loss = self.dynamics_model._select_criterion()
         self.dynamics_model.model.requires_grad_(False)
-        if dynamics_train_mode == DYNAMICS_RL_TRANSFER:
-            raise NotImplementedError(
-                "RL transfer learning is not supported for PPO: the rollout buffer stores "
-                "pre-computed dynamics predictions so gradients cannot flow back through the "
-                "dynamics model. Use TD3 for rl_transfer, or use 'predictive' mode with PPO."
-            )
         self.dynamics_train_mode = dynamics_train_mode
         self.dynamics_rl_lr = dynamics_rl_lr
         self.dynamics_rl_start_episode = dynamics_rl_start_episode
@@ -275,6 +269,12 @@ class ModelBasedPPO(OnPolicyAlgorithm):
         self.policy.set_training_mode(True)
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
+
+        # Activate dynamics training once the episode threshold is met
+        episode_ready = self._dynamics_episode_count >= self.dynamics_rl_start_episode
+        rl_transfer_active = self.dynamics_train_mode == DYNAMICS_RL_TRANSFER and episode_ready
+        if rl_transfer_active and not self._dynamics_training_active:
+            self._activate_dynamics_training()
         # Compute current clip range
         clip_range = self.clip_range(self._current_progress_remaining)  # type: ignore[operator]
         # Optional: clip range for the value function
@@ -296,7 +296,13 @@ class ModelBasedPPO(OnPolicyAlgorithm):
                     # Convert discrete action from float to long
                     actions = rollout_data.actions.long().flatten()
 
-                x = rollout_data.model_based_obs
+                if rl_transfer_active:
+                    # Recompute predictions live so policy loss gradients flow into dynamics model
+                    x_seq, y_seq, x_mark, y_mark = rollout_data.pred_sequences
+                    pred, _ = self._dynamics_model_predict(x_seq, y_seq, x_mark, y_mark)
+                    x = th.cat((rollout_data.observations, pred.flatten(1)), dim=1)
+                else:
+                    x = rollout_data.model_based_obs
 
                 values, log_prob, entropy = self.policy.evaluate_actions(x, actions)
                 values = values.flatten()
@@ -360,10 +366,14 @@ class ModelBasedPPO(OnPolicyAlgorithm):
 
                 # Optimization step
                 self.policy.optimizer.zero_grad()
+                if rl_transfer_active:
+                    self.dynamics_model_optim.zero_grad()
                 loss.backward()
                 # Clip grad norm
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
+                if rl_transfer_active:
+                    self.dynamics_model_optim.step()
 
             self._n_updates += 1
             if not continue_training:
@@ -389,7 +399,6 @@ class ModelBasedPPO(OnPolicyAlgorithm):
         self.logger.record("train/value_loss", np.mean(value_losses))
         self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
-        self.logger.record("train/loss", loss.item())
         self.logger.record("train/explained_variance", explained_var)
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
@@ -548,6 +557,17 @@ class ModelBasedPPO(OnPolicyAlgorithm):
                 pred = self._get_prediction(prices, dates)
                 obs_pred_input = make_pred_obs(self._last_obs, pred)
                 actions, values, log_probs = self.policy(obs_pred_input)
+                # Store raw dynamics sequences for rl_transfer gradient recomputation
+                if self.dynamics_train_mode == DYNAMICS_RL_TRANSFER:
+                    x_seq, y_seq, x_mark_seq, y_mark_seq = self.window_buffer.get_last(device='cpu')
+                    pred_seq = (
+                        x_seq.squeeze(0).numpy(),
+                        y_seq.squeeze(0).numpy(),
+                        x_mark_seq.squeeze(0).numpy(),
+                        y_mark_seq.squeeze(0).numpy(),
+                    )
+                else:
+                    pred_seq = None
             actions = actions.cpu().numpy()
 
             # Rescale and perform action
@@ -610,6 +630,7 @@ class ModelBasedPPO(OnPolicyAlgorithm):
                 log_probs,
                 dates,
                 obs_pred_input,
+                pred_seq=pred_seq,
             )
             self._dynamics_episode_count += int(np.any(dones))
             self._last_obs = new_obs  # type: ignore[assignment]

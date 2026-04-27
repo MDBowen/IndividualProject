@@ -31,7 +31,12 @@ from models.train_autoformer import train_autoformer_from_finrl
 
 predictor_agents = ['dense_predictor', 'autoformer_predictor','autoformer_topK']
 basic_agents = ['buy_and_hold']
-model_based_agents = ['dense_td3', 'dense_ppo', 'autoformer_td3','autoformer_ppo']
+model_based_agents = [
+    'dense_td3', 'dense_ppo', 'autoformer_td3', 'autoformer_ppo',
+    'autoformer_td3_frozen', 'autoformer_ppo_frozen',
+    'autoformer_td3_predictive', 'autoformer_ppo_predictive',
+    'autoformer_td3_transfer', 'autoformer_ppo_transfer',
+]
 model_free_agents = ['ddpg','ppo','td3']
 
 def get_data(train_start, train_end, val_end, test_end, tickers, indicators = None, data_path = 'data/datasets'):
@@ -432,6 +437,16 @@ if __name__ == '__main__':
         help = 'For testing only run sp100'
     )
     parser.add_argument(
+        '--compare_mbrl',
+        action='store_true',
+        default=False,
+        help=(
+            'Run a structured comparison of all dynamics training modes: '
+            'model-free (td3, ppo), model-based frozen, predictive, and rl_transfer. '
+            'Overrides the --agents selection.'
+        ),
+    )
+    parser.add_argument(
         '--dynamics_train_mode',
         type=str,
         default='frozen',
@@ -487,14 +502,21 @@ if __name__ == '__main__':
     ]
 
     agents = {
-              'buy_and_hold': BuyAndHold, 
-              'dense_td3': ModelBasedTD3,
-              'dense_ppo':ModelBasedPPO,
-              'td3': None, 'ppo': None,
-              'dense_predictor': PredictionSignStrategy, 
-              'autoformer_predictor': PredictionSignStrategy,
-              'autoformer_td3': ModelBasedTD3,
-              'autoformer_ppo':ModelBasedPPO }
+        'buy_and_hold': BuyAndHold,
+        'dense_td3': ModelBasedTD3,
+        'dense_ppo': ModelBasedPPO,
+        'td3': None, 'ppo': None,
+        'dense_predictor': PredictionSignStrategy,
+        'autoformer_predictor': PredictionSignStrategy,
+        'autoformer_td3': ModelBasedTD3,
+        'autoformer_ppo': ModelBasedPPO,
+        # 'autoformer_td3_frozen': ModelBasedTD3,
+        # 'autoformer_ppo_frozen': ModelBasedPPO,
+        # 'autoformer_td3_predictive': ModelBasedTD3,
+        # 'autoformer_ppo_predictive': ModelBasedPPO,
+        # 'autoformer_td3_transfer': ModelBasedTD3,
+        # 'autoformer_ppo_transfer': ModelBasedPPO,
+    }
 
     # agents = {
     #           'buy_and_hold': BuyAndHold, 
@@ -575,8 +597,65 @@ if __name__ == '__main__':
             "dynamics_rl_lr": args.dynamics_rl_lr,
             "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
-        'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}}
+        'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}},
+        'autoformer_td3_frozen': {
+            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts': 150,
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": 'frozen',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'autoformer_ppo_frozen': {
+            "n_steps": min(2048, timesteps), "ent_coef": 0.01,
+            "learning_rate": 0.00025, "batch_size": min(128, timesteps),
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": 'frozen',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'autoformer_td3_predictive': {
+            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts': 150,
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": 'predictive',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'autoformer_ppo_predictive': {
+            "n_steps": min(2048, timesteps), "ent_coef": 0.01,
+            "learning_rate": 0.00025, "batch_size": min(128, timesteps),
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": 'predictive',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'autoformer_td3_transfer': {
+            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts': 150,
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": 'rl_transfer',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'autoformer_ppo_transfer': {
+            "n_steps": min(2048, timesteps), "ent_coef": 0.01,
+            "learning_rate": 0.00025, "batch_size": min(128, timesteps),
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": 'rl_transfer',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
     }
+
+    if args.compare_mbrl:
+        agents = {
+            'td3': None,
+            'ppo': None,
+            'autoformer_td3_frozen': ModelBasedTD3,
+            'autoformer_ppo_frozen': ModelBasedPPO,
+            'autoformer_td3_predictive': ModelBasedTD3,
+            'autoformer_ppo_predictive': ModelBasedPPO,
+            'autoformer_td3_transfer': ModelBasedTD3,
+            'autoformer_ppo_transfer': ModelBasedPPO,
+        }
 
     if args.only_sp100:
         all_tickers = {'sp100': all_tickers['sp100']}

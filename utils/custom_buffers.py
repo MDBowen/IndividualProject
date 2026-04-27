@@ -24,7 +24,7 @@ except ImportError:
     psutil = None
 
 from stable_baselines3.common.buffers import BaseBuffer
-from utils.timefeatures import time_features
+from utils.timefeatures import time_features, time_features_from_frequency_str
 
 from stable_baselines3.common.preprocessing import get_obs_shape
 
@@ -48,6 +48,7 @@ class MBRolloutSample(NamedTuple):
     advantages: th.Tensor
     returns: th.Tensor
     model_based_obs: th.Tensor
+    pred_sequences: tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor] | None
 
 
 class Autoformer_Buffer:
@@ -505,6 +506,10 @@ class CustomRolloutBuffer(BaseBuffer):
 
         self.price_dim = price_dim
         self.pred_obs_dim = get_obs_shape(policy_obs_space)
+        self.seq_len = prediction_window
+        self.seq_label_len = label_len
+        self.seq_pred_len = prediction_horizon
+        self.time_feat_dim = len(time_features_from_frequency_str(dynamics_model_freq))
 
         self.reset()
 
@@ -520,6 +525,11 @@ class CustomRolloutBuffer(BaseBuffer):
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.dates  = np.zeros((self.buffer_size, self.n_envs), dtype=object)
         self.obs_pred_inputs = np.zeros((self.buffer_size, self.n_envs, *self.pred_obs_dim), dtype=self.observation_space.dtype)
+        dec_len = self.seq_label_len + self.seq_pred_len
+        self.seq_x      = np.zeros((self.buffer_size, self.n_envs, self.seq_len,  self.price_dim),    dtype=np.float32)
+        self.seq_y      = np.zeros((self.buffer_size, self.n_envs, dec_len,       self.price_dim),    dtype=np.float32)
+        self.seq_x_mark = np.zeros((self.buffer_size, self.n_envs, self.seq_len,  self.time_feat_dim), dtype=np.float32)
+        self.seq_y_mark = np.zeros((self.buffer_size, self.n_envs, dec_len,       self.time_feat_dim), dtype=np.float32)
         self.generator_ready = False
         super().reset()
 
@@ -570,6 +580,7 @@ class CustomRolloutBuffer(BaseBuffer):
         log_prob: th.Tensor,
         dates: list[float] | None = None,
         obs_pred_input: object | None = None,
+        pred_seq: tuple | None = None,
     ) -> None:
         """
         :param obs: Observation
@@ -600,6 +611,12 @@ class CustomRolloutBuffer(BaseBuffer):
         self.values[self.pos] = value.clone().cpu().numpy().flatten()
         self.log_probs[self.pos] = log_prob.clone().cpu().numpy()
         self.obs_pred_inputs[self.pos] = obs_pred_input.cpu().numpy()
+        if pred_seq is not None:
+            x, y, x_mark, y_mark = pred_seq
+            self.seq_x[self.pos]      = x.reshape(self.n_envs, self.seq_len, self.price_dim)
+            self.seq_y[self.pos]      = y.reshape(self.n_envs, self.seq_label_len + self.seq_pred_len, self.price_dim)
+            self.seq_x_mark[self.pos] = x_mark.reshape(self.n_envs, self.seq_len, self.time_feat_dim)
+            self.seq_y_mark[self.pos] = y_mark.reshape(self.n_envs, self.seq_label_len + self.seq_pred_len, self.time_feat_dim)
         self.pos += 1
         if self.pos == self.buffer_size:
             self.full = True
@@ -616,6 +633,10 @@ class CustomRolloutBuffer(BaseBuffer):
                 "log_probs",
                 "advantages",
                 "returns",
+                "seq_x",
+                "seq_y",
+                "seq_x_mark",
+                "seq_y_mark",
             ]
 
             for tensor in _tensor_names:
@@ -645,7 +666,13 @@ class CustomRolloutBuffer(BaseBuffer):
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten(),
             self.returns[batch_inds].flatten(),
-            self.obs_pred_inputs[batch_inds]# Might need fixing this bit to flatten(1)
+            self.obs_pred_inputs[batch_inds],
         )
-        return MBRolloutSample(*tuple(map(self.to_torch, data)))
+        pred_sequences = (
+            self.to_torch(self.seq_x[batch_inds]),
+            self.to_torch(self.seq_y[batch_inds]),
+            self.to_torch(self.seq_x_mark[batch_inds]),
+            self.to_torch(self.seq_y_mark[batch_inds]),
+        )
+        return MBRolloutSample(*tuple(map(self.to_torch, data)), pred_sequences=pred_sequences)
     
