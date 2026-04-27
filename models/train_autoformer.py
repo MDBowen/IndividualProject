@@ -373,7 +373,7 @@ def train_autoformer(
 
 def evaluate(model, val_loader, criterion):
     model.model.eval()
-    val_loss = []
+    val_loss, all_mae, all_da = [], [], []
     with torch.no_grad():
         for batch_x, batch_y, batch_x_mark, batch_y_mark in val_loader:
             batch_x      = batch_x.float().to(model.device)
@@ -383,12 +383,16 @@ def evaluate(model, val_loader, criterion):
 
             outputs, target = model._predict(batch_x, batch_y, batch_x_mark, batch_y_mark)
 
-            directional_accuracy = (np.sign(np.diff(target.detach().cpu().numpy())) == np.sign(np.diff(outputs.detach().cpu().numpy()))).mean()
-            MAE = torch.mean(torch.abs(outputs - target)).item()
+            B, T, F = outputs.shape
+            inv_pred = model.scaler.inverse_transform(outputs.detach().cpu().numpy().reshape(-1, F)).reshape(B, T, F)
+            inv_true = model.scaler.inverse_transform(target.detach().cpu().numpy().reshape(-1, F)).reshape(B, T, F)
+
+            all_mae.append(np.mean(np.abs(inv_pred - inv_true)))
+            all_da.append((np.sign(np.diff(inv_true, axis=1)) == np.sign(np.diff(inv_pred, axis=1))).mean())
 
             loss = criterion(outputs, target)
             val_loss.append(loss.item())
-    return np.mean(val_loss), directional_accuracy, MAE
+    return np.mean(val_loss), float(np.mean(all_da)), float(np.mean(all_mae))
 
 def train_autoformer_from_finrl(
     model,
