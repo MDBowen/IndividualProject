@@ -25,6 +25,10 @@ SelfTD3 = TypeVar("SelfTD3", bound="ModelBasedTD3")
 from utils.custom_buffers import Autoformer_Buffer, CustomReplayBuffer
 from agents.modelbased_TD3.policies import ModelBasedTD3Policy
 
+DYNAMICS_FROZEN      = 'frozen'       # parameters locked after pre-training
+DYNAMICS_PREDICTIVE  = 'predictive'   # supervised prediction loss during RL
+DYNAMICS_RL_TRANSFER = 'rl_transfer'  # gradients flow from actor loss into dynamics model
+
 class ModelBasedTD3(OffPolicyAlgorithm):
     """
     This is a modification of stable baselines3's TD3 which takes some additional params, including a dynamics prediciton modue
@@ -122,6 +126,9 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         _init_setup_model: bool = True,
         _dynamics_kwargs: dict[str, Any] | None = None,
         policy: str | type[TD3Policy] | None = ModelBasedTD3Policy,
+        dynamics_train_mode: str = DYNAMICS_FROZEN,
+        dynamics_rl_lr: float = 1e-5,
+        dynamics_rl_start_episode: int = 0,
     ):
         super().__init__(
             policy,
@@ -164,6 +171,12 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         self.critic_observation_space = self.observation_space
         self.dynamics_model = dynamics_model
         self.train_dynamics_model = False
+        self.dynamics_model.model.requires_grad_(False)
+        self.dynamics_train_mode = dynamics_train_mode
+        self.dynamics_rl_lr = dynamics_rl_lr
+        self.dynamics_rl_start_episode = dynamics_rl_start_episode
+        self._dynamics_training_active = False
+        self._dynamics_episode_count = 0
         self.window_buffer = Autoformer_Buffer(max_size=100_000, 
                                                feature_size=feature_dim, 
                                                seq_len=dynamics_seq_len, 
@@ -192,9 +205,17 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             assert prices.shape == (1,self.dynamics_model.args.enc_in,), f'Prices didnt come out the right shape, stock dim: {self.dynamics_model.args.enc_in}, obs: {obs.shape}, prices: {prices.shape}'
             return prices
 
-    def train_dynamics_model(self, set_train):
+    def set_train_dynamics_model(self, set_train: bool):
         assert isinstance(set_train, bool), 'set_train true or false'
         self.train_dynamics_model = set_train
+        self.dynamics_model.model.requires_grad_(set_train)
+
+    def _activate_dynamics_training(self) -> None:
+        self.dynamics_model.model.requires_grad_(True)
+        for pg in self.dynamics_model_optim.param_groups:
+            pg['lr'] = self.dynamics_rl_lr
+        self.dynamics_model_optim.zero_grad()
+        self._dynamics_training_active = True
 
     # def _setup_model(self) -> None:
     #     super()._setup_model()
@@ -282,6 +303,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             self._last_date
         )
 
+        self._dynamics_episode_count += int(np.any(dones))
         self._last_obs = new_obs
         self._last_date = new_dates
         # Save the unnormalized observation
@@ -301,6 +323,7 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
             # For n-step replay, discount factor is gamma**n_steps (when no early termination)
+            episode_ready = self._dynamics_episode_count >= self.dynamics_rl_start_episode
 
             discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
 
@@ -342,20 +365,33 @@ class ModelBasedTD3(OffPolicyAlgorithm):
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
-                # Compute actor loss
-                with th.no_grad():
-                    x, y, x_mark, y_mark = replay_data.pred_observations
-                    pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
+                rl_transfer_active = (
+                    self.dynamics_train_mode == DYNAMICS_RL_TRANSFER and episode_ready
+                )
+                if rl_transfer_active:
+                    # Gradients flow through dynamics model into the actor loss
+                    if not self._dynamics_training_active:
+                        self._activate_dynamics_training()
+                    x_seq, y_seq, x_mark, y_mark = replay_data.pred_observations
+                    pred, _ = self._dynamics_model_predict(x_seq, y_seq, x_mark, y_mark)
+                    x_actor = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
+                else:
+                    with th.no_grad():
+                        x_seq, y_seq, x_mark, y_mark = replay_data.pred_observations
+                        pred, _ = self._dynamics_model_predict(x_seq, y_seq, x_mark, y_mark)
+                        x_actor = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
 
-                    x = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
-
-                actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(x)).mean()
+                actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(x_actor)).mean()
                 actor_losses.append(actor_loss.item())
 
-                # Optimize the actor
+                # Optimize the actor (and dynamics model jointly in rl_transfer mode)
                 self.actor.optimizer.zero_grad()
+                if rl_transfer_active:
+                    self.dynamics_model_optim.zero_grad()
                 actor_loss.backward()
                 self.actor.optimizer.step()
+                if rl_transfer_active:
+                    self.dynamics_model_optim.step()
 
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
                 polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
@@ -363,14 +399,14 @@ class ModelBasedTD3(OffPolicyAlgorithm):
                 polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
                 polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
 
-            # Optimize dynamics model if configured so
-            if self.train_dynamics_model:
-                x, y, x_mark, y_mark = replay_data.pred_observations
-                pred, y = self._dynamics_model_predict(x, y, x_mark, y_mark, scale=False)
-                
-                pred = pred
-                true = y
+            # Predictive training: supervised loss on forecast sequences
+            if self.dynamics_train_mode == DYNAMICS_PREDICTIVE and episode_ready:
+                if not self._dynamics_training_active:
+                    self._activate_dynamics_training()
+                x_seq, y_seq, x_mark, y_mark = replay_data.pred_observations
+                pred, true = self._dynamics_model_predict(x_seq, y_seq, x_mark, y_mark, scale=False)
                 loss = self.dynamics_model_loss(pred, true)
+                self.dynamics_model_optim.zero_grad()
                 loss.backward()
                 self.dynamics_model_optim.step()
 

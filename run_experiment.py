@@ -319,7 +319,7 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
 
                 results[trials][data_name][agent_name] = {}
 
-                print(f'\n Running agent {agent_name} on dataset {data_name} with {tic} having {train["date"].nunique()} trading days \n')
+                print(f'\n Running agent {agent_name} on dataset {data_name} with {tic} train,test, val have {train["date"].nunique()}, {val["date"].nunique()}, {test["date"].nunique()} trading days \n')
 
                 agent_kwargs = agents_kwargs[agent_name]
 
@@ -398,7 +398,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--verbose',
         type=int,
-        default=0,
+        default=1,
         help='Verbosity level for eval callbacks (default: 1)',
     )
     parser.add_argument(
@@ -430,6 +430,30 @@ if __name__ == '__main__':
         type=bool,
         default=False,
         help = 'For testing only run sp100'
+    )
+    parser.add_argument(
+        '--dynamics_train_mode',
+        type=str,
+        default='frozen',
+        choices=['frozen', 'predictive', 'rl_transfer'],
+        help=(
+            'How the dynamics model is updated during RL training. '
+            '"frozen": locked after pre-training (default). '
+            '"predictive": supervised forecast loss, starts after --dynamics_rl_start_episode episodes. '
+            '"rl_transfer": actor loss gradients flow back into dynamics model (TD3 only).'
+        ),
+    )
+    parser.add_argument(
+        '--dynamics_rl_lr',
+        type=float,
+        default=1e-5,
+        help='Learning rate for dynamics model during RL training (default: 1e-5)',
+    )
+    parser.add_argument(
+        '--dynamics_rl_start_episode',
+        type=int,
+        default=5,
+        help='Number of RL episodes before dynamics model training begins (default: 5)',
     )
     args = parser.parse_args()
 
@@ -517,10 +541,16 @@ if __name__ == '__main__':
         'autoformer_td3': {
             "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
             "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": args.dynamics_train_mode,
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
         'dense_td3': {
             "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts' : 150,
             "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
+            "dynamics_train_mode": args.dynamics_train_mode,
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
         'dense_ppo': {
             "n_steps": min(2048, timesteps),
@@ -528,6 +558,9 @@ if __name__ == '__main__':
             "learning_rate": 0.00025,
             "batch_size": min(128, timesteps),
             "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
+            "dynamics_train_mode": args.dynamics_train_mode,
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
         'dense_predictor': {"_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep}},
         'autoformer_predictor': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}},
@@ -537,7 +570,10 @@ if __name__ == '__main__':
             "ent_coef": 0.01,
             "learning_rate": 0.00025,
             "batch_size": min(128, timesteps),
-            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
+            "dynamics_train_mode": args.dynamics_train_mode,
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
         'autoformer_topK': {"_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs}}
     }

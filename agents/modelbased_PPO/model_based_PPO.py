@@ -20,6 +20,9 @@ SelfPPO = TypeVar("SelfPPO", bound="ModelBasedPPO")
 from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 from utils.custom_buffers import Autoformer_Buffer, CustomRolloutBuffer, MBRolloutSample
 
+DYNAMICS_FROZEN      = 'frozen'       # parameters locked after pre-training
+DYNAMICS_PREDICTIVE  = 'predictive'   # supervised prediction loss during RL
+DYNAMICS_RL_TRANSFER = 'rl_transfer'  # gradients flow from policy loss into dynamics model
 
 class ModelBasedPPO(OnPolicyAlgorithm):
     """
@@ -114,6 +117,9 @@ class ModelBasedPPO(OnPolicyAlgorithm):
         _init_setup_model: bool = True,
         _dynamics_kwargs: dict[str, Any] | None = None,
         policy: str | type[ActorCriticPolicy] | None = ActorCriticPolicy,
+        dynamics_train_mode: str = DYNAMICS_FROZEN,
+        dynamics_rl_lr: float = 1e-5,
+        dynamics_rl_start_episode: int = 0,
     ):
         super().__init__(
             policy,
@@ -166,6 +172,18 @@ class ModelBasedPPO(OnPolicyAlgorithm):
 
         self.dynamics_model_optim = self.dynamics_model._select_optimizer()
         self.dynamics_model_loss = self.dynamics_model._select_criterion()
+        self.dynamics_model.model.requires_grad_(False)
+        if dynamics_train_mode == DYNAMICS_RL_TRANSFER:
+            raise NotImplementedError(
+                "RL transfer learning is not supported for PPO: the rollout buffer stores "
+                "pre-computed dynamics predictions so gradients cannot flow back through the "
+                "dynamics model. Use TD3 for rl_transfer, or use 'predictive' mode with PPO."
+            )
+        self.dynamics_train_mode = dynamics_train_mode
+        self.dynamics_rl_lr = dynamics_rl_lr
+        self.dynamics_rl_start_episode = dynamics_rl_start_episode
+        self._dynamics_training_active = False
+        self._dynamics_episode_count = 0
 
         self._last_date = None
 
@@ -351,6 +369,18 @@ class ModelBasedPPO(OnPolicyAlgorithm):
             if not continue_training:
                 break
 
+        # Predictive training: supervised loss on the last collected sequence
+        if (self.dynamics_train_mode == DYNAMICS_PREDICTIVE
+                and self._dynamics_episode_count >= self.dynamics_rl_start_episode):
+            if not self._dynamics_training_active:
+                self._activate_dynamics_training()
+            x, y, x_mark, y_mark = self.window_buffer.get_last(device=self.device)
+            pred, true = self._dynamics_model_predict(x, y, x_mark, y_mark, scale=False)
+            loss = self.dynamics_model_loss(pred, true)
+            self.dynamics_model_optim.zero_grad()
+            loss.backward()
+            self.dynamics_model_optim.step()
+
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         # Logs
@@ -387,6 +417,13 @@ class ModelBasedPPO(OnPolicyAlgorithm):
             progress_bar=progress_bar,
         )
     
+
+    def _activate_dynamics_training(self) -> None:
+        self.dynamics_model.model.requires_grad_(True)
+        for pg in self.dynamics_model_optim.param_groups:
+            pg['lr'] = self.dynamics_rl_lr
+        self.dynamics_model_optim.zero_grad()
+        self._dynamics_training_active = True
 
     def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale=True):
         if self.dynamics_model.args.scale and scale:
@@ -574,6 +611,7 @@ class ModelBasedPPO(OnPolicyAlgorithm):
                 dates,
                 obs_pred_input,
             )
+            self._dynamics_episode_count += int(np.any(dones))
             self._last_obs = new_obs  # type: ignore[assignment]
             self._last_date = new_dates
             self._last_episode_starts = dones
