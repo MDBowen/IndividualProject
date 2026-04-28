@@ -440,21 +440,26 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         state_dicts = ["policy", "actor.optimizer", "critic.optimizer"]
         return state_dicts, []
     
+    def _ensure_scaler_cached(self, device):
+        if not hasattr(self, '_scaler_device') or self._scaler_device != device:
+            self._mean_t_cached  = self.dynamics_model.mean_t.to(device)
+            self._scale_t_cached = self.dynamics_model.scale_t.to(device)
+            self._scaler_device  = device
+
     def _dynamics_model_predict(self, x, y, x_mark, y_mark, scale=True):
         if self.dynamics_model.args.scale and scale:
-            mean_v  = self.dynamics_model.mean_t.to(x.device)
-            std_v   = self.dynamics_model.scale_t.to(x.device)
-            x = (x - mean_v) / std_v
-            y = (y - mean_v) / std_v
+            self._ensure_scaler_cached(x.device)
+            x = (x - self._mean_t_cached) / self._scale_t_cached
+            y = (y - self._mean_t_cached) / self._scale_t_cached
 
         pred, y = self.dynamics_model._predict(x, y, x_mark, y_mark)
 
         if self.dynamics_model.args.scale and scale:
-            pred = pred * std_v + mean_v
+            pred = pred * self._scale_t_cached + self._mean_t_cached
 
         return pred, y
 
-    
+
     def _get_prediction(self, x, date):
         ''''x needs to be the prices in obs
             date needs to be the date from the env
@@ -462,9 +467,10 @@ class ModelBasedTD3(OffPolicyAlgorithm):
         assert date is not None, 'date needs to be passed in for the time features'
         x= x.squeeze()
         assert len(x.shape) == 1, f'x needs to be 1d array of prices, got {x.shape}'
-        self.window_buffer.add(x, date) 
+        self.window_buffer.add(x, date)
         x, y, x_mark, y_mark = self.window_buffer.get_last(device = self.device)
-        pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
+        with th.no_grad():
+            pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
         return pred.detach()
 
     def predict(

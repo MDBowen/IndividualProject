@@ -55,6 +55,7 @@ class Autoformer_Buffer:
     def __init__(self,  max_size, feature_size, seq_len, pred_len, label_len, freq = 'D'):
         self.prices = deque(maxlen=max_size)
         self.dates = deque(maxlen=max_size)
+        self.marks = deque(maxlen=max_size)
         self.seq_len = seq_len
         self.feature_size = feature_size
         self.pred_len = pred_len
@@ -62,21 +63,26 @@ class Autoformer_Buffer:
         self.label_len =  label_len
         self.freq = freq
         self.reset()
-        
+
     def reset(self):
         self.prices.clear()
         self.dates.clear()
+        self.marks.clear()
 
+        dummy_mark = time_features(pd.to_datetime(['1900-01-01']), freq=self.freq).T[0].astype(np.float32)
         for _ in range(self.max_size):
             self.prices.append(np.zeros(self.feature_size, dtype=np.float32))
             self.dates.append('1900-01-01')
+            self.marks.append(dummy_mark)
 
     def add(self, x, date):
 
         assert isinstance(x, np.ndarray) and x.shape[0] == self.feature_size, f'input x needs to be a numpy array of shape (feature_size,) is instead {x}'
 
+        mark = time_features(pd.to_datetime([date]), freq=self.freq).T[0]
         self.prices.append(x)
         self.dates.append(date)
+        self.marks.append(mark)
 
     def get_all(self):
         return list(self.prices), list(self.dates)
@@ -89,15 +95,14 @@ class Autoformer_Buffer:
         x = list(self.prices)[-self.seq_len:]
         y_label = list(self.prices)[-self.label_len:]
 
-        x_dates = list(self.dates)[-self.seq_len:]
-        y_dates = list(self.dates)[-self.label_len:]
+        # use pre-computed marks from add(); only compute future pred_dates marks
+        x_mark = np.stack(list(self.marks)[-self.seq_len:])
+        y_hist_mark = np.stack(list(self.marks)[-self.label_len:])
 
-        pred_dates = pd.date_range(y_dates[-1], periods=self.pred_len + 1, freq=self.freq)
-
-        y_stamp = y_dates + list(pred_dates)[1:]
-        
-        x_mark = time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0)
-        y_mark = time_features(pd.to_datetime(y_stamp), freq=self.freq).transpose(1, 0)
+        last_date = list(self.dates)[-1]
+        pred_dates = pd.date_range(last_date, periods=self.pred_len + 1, freq=self.freq)
+        pred_mark = time_features(pred_dates[1:], freq=self.freq).transpose(1, 0)
+        y_mark = np.concatenate([y_hist_mark, pred_mark], axis=0)
 
         x = th.Tensor(x)
         y_label = th.Tensor(y_label)
@@ -377,10 +382,16 @@ class CustomReplayBuffer(BaseBuffer):
             self.dates[i - self.label_len + 1: i + self.pred_len + 1 , env_indices[j]]  for j, i in enumerate(batch_inds)
             ]
 
-        x_mark_batch = [time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0) for x_dates in x_batch_dates]
-        y_mark_batch = [time_features(pd.to_datetime(y_dates), freq=self.freq).transpose(1, 0) for y_dates in y_batch_dates]
-        next_x_mark_batch = [time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0) for x_dates in next_x_dates]
-        next_y_mark_batch = [time_features(pd.to_datetime(x_dates), freq=self.freq).transpose(1, 0) for x_dates in next_y_dates]
+        def _batch_marks(date_seqs, freq):
+            all_dates = np.concatenate([np.array(d) for d in date_seqs])
+            marks = time_features(pd.to_datetime(all_dates), freq=freq).T
+            split = [len(d) for d in date_seqs]
+            return np.split(marks, np.cumsum(split[:-1]))
+
+        x_mark_batch      = _batch_marks(x_batch_dates, self.freq)
+        y_mark_batch      = _batch_marks(y_batch_dates, self.freq)
+        next_x_mark_batch = _batch_marks(next_x_dates,  self.freq)
+        next_y_mark_batch = _batch_marks(next_y_dates,  self.freq)
 
         
         x = self._normalize_obs( np.stack([

@@ -264,14 +264,15 @@ def train_autoformer(
         scaler=train_ds.scaler,
     )
 
-    _nw  = min(4, os.cpu_count() or 1)
+    _nw  = min(8, os.cpu_count() or 1)
     _pin = torch.cuda.is_available()
+    _pw  = _nw > 0
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              drop_last=True,  num_workers=_nw, pin_memory=_pin)
+                              drop_last=True,  num_workers=_nw, pin_memory=_pin, persistent_workers=_pw)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
-                              drop_last=False, num_workers=_nw, pin_memory=_pin)
+                              drop_last=False, num_workers=_nw, pin_memory=_pin, persistent_workers=_pw)
     test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False,
-                              drop_last=False, num_workers=_nw, pin_memory=_pin)
+                              drop_last=False, num_workers=_nw, pin_memory=_pin, persistent_workers=_pw)
 
     # ---- config ---------------------------------------------------------- #
     args, _ = get_train_config()
@@ -456,12 +457,13 @@ def train_autoformer_from_finrl(
         scaler=train_ds.scaler,   # reuse train scaler — no data leakage
     )
 
-    _nw  = min(4, os.cpu_count() or 1)
+    _nw  = min(8, os.cpu_count() or 1)
     _pin = torch.cuda.is_available()
+    _pw  = _nw > 0
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True,  drop_last=True,  num_workers=_nw, pin_memory=_pin)
+                              shuffle=True,  drop_last=True,  num_workers=_nw, pin_memory=_pin, persistent_workers=_pw)
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              shuffle=False, drop_last=False, num_workers=_nw, pin_memory=_pin)
+                              shuffle=False, drop_last=False, num_workers=_nw, pin_memory=_pin, persistent_workers=_pw)
 
     # Expose the scaler and its parameters as GPU-ready tensors
     model.scaler  = train_ds.scaler
