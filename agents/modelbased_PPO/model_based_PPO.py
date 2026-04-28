@@ -270,8 +270,13 @@ class ModelBasedPPO(OnPolicyAlgorithm):
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
 
-        # Activate dynamics training once the episode threshold is met
-        episode_ready = self._dynamics_episode_count >= self.dynamics_rl_start_episode
+        # Fall back to step-based gate when episodes are too long to complete
+        # within the training budget (e.g. 5 796-step episodes with 1 000 timesteps).
+        step_fallback = self.num_timesteps >= max(self.learning_starts * 2, 300)
+        episode_ready = (
+            self._dynamics_episode_count >= self.dynamics_rl_start_episode
+            or step_fallback
+        )
         rl_transfer_active = self.dynamics_train_mode == DYNAMICS_RL_TRANSFER and episode_ready
         if rl_transfer_active and not self._dynamics_training_active:
             self._activate_dynamics_training()
@@ -373,22 +378,27 @@ class ModelBasedPPO(OnPolicyAlgorithm):
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
                 if rl_transfer_active:
+                    th.nn.utils.clip_grad_norm_(
+                        self.dynamics_model.model.parameters(), max_norm=1.0
+                    )
                     self.dynamics_model_optim.step()
 
             self._n_updates += 1
             if not continue_training:
                 break
 
-        # Predictive training: supervised loss on the last collected sequence
-        if (self.dynamics_train_mode == DYNAMICS_PREDICTIVE
-                and self._dynamics_episode_count >= self.dynamics_rl_start_episode):
+        # Predictive / rl_transfer: supervised anchor on the last collected sequence.
+        # For rl_transfer this prevents the dynamics model forgetting how to forecast
+        # while being fine-tuned by policy gradients.
+        dynamics_update_mode = self.dynamics_train_mode in (DYNAMICS_PREDICTIVE, DYNAMICS_RL_TRANSFER)
+        if dynamics_update_mode and self._dynamics_episode_count >= self.dynamics_rl_start_episode:
             if not self._dynamics_training_active:
                 self._activate_dynamics_training()
             x, y, x_mark, y_mark = self.window_buffer.get_last(device=self.device)
             pred, true = self._dynamics_model_predict(x, y, x_mark, y_mark, scale=False)
-            loss = self.dynamics_model_loss(pred, true)
+            sup_loss = self.dynamics_model_loss(pred, true)
             self.dynamics_model_optim.zero_grad()
-            loss.backward()
+            sup_loss.backward()
             self.dynamics_model_optim.step()
 
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())

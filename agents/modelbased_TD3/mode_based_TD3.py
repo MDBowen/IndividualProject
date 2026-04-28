@@ -323,7 +323,13 @@ class ModelBasedTD3(OffPolicyAlgorithm):
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
             # For n-step replay, discount factor is gamma**n_steps (when no early termination)
-            episode_ready = self._dynamics_episode_count >= self.dynamics_rl_start_episode
+            # Fall back to step-based gate when episodes are too long to complete
+            # within the training budget (e.g. 5 796-step episodes with 1 000 timesteps).
+            step_fallback = self.num_timesteps >= max(self.learning_starts * 2, 300)
+            episode_ready = (
+                self._dynamics_episode_count >= self.dynamics_rl_start_episode
+                or step_fallback
+            )
 
             discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
 
@@ -338,13 +344,10 @@ class ModelBasedTD3(OffPolicyAlgorithm):
                 pred, _ = self._dynamics_model_predict(x, y, x_mark, y_mark)
 
                 x = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
-                assert x.shape[0] == next_obs.shape[0], f'Shapes wrong next_obs: {next_obs.shape}, pred: {pred.flatten(1).shape}, x: {x.shape}' 
+                assert x.shape[0] == next_obs.shape[0], f'Shapes wrong next_obs: {next_obs.shape}, pred: {pred.flatten(1).shape}, x: {x.shape}'
                 next_actions = (self.actor_target(x) + noise).clamp(-1, 1)
-               
-                # bellman equation : Q = r + Q'(s,a)
 
                 # Compute the next Q-values: min over all critics targets
-                next_obs = replay_data.next_observations
                 next_q_values = th.cat(self.critic_target(next_obs, next_actions), dim=1)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
@@ -368,29 +371,44 @@ class ModelBasedTD3(OffPolicyAlgorithm):
                 rl_transfer_active = (
                     self.dynamics_train_mode == DYNAMICS_RL_TRANSFER and episode_ready
                 )
+                x_seq, y_seq, x_mark, y_mark = replay_data.pred_observations
                 if rl_transfer_active:
-                    # Gradients flow through dynamics model into the actor loss
                     if not self._dynamics_training_active:
                         self._activate_dynamics_training()
-                    x_seq, y_seq, x_mark, y_mark = replay_data.pred_observations
+                    # Actor receives current obs + prediction from current obs sequences,
+                    # matching the rollout behaviour in predict(). Critic evaluates at
+                    # current obs (critic_observation_space = raw obs).
                     pred, _ = self._dynamics_model_predict(x_seq, y_seq, x_mark, y_mark)
-                    x_actor = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
+                    x_actor = th.cat((obs, pred.flatten(1)), 1).squeeze()
                 else:
                     with th.no_grad():
-                        x_seq, y_seq, x_mark, y_mark = replay_data.pred_observations
                         pred, _ = self._dynamics_model_predict(x_seq, y_seq, x_mark, y_mark)
-                        x_actor = th.cat((next_obs, pred.flatten(1)), 1).squeeze()
+                        x_actor = th.cat((obs, pred.flatten(1)), 1).squeeze()
 
-                actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(x_actor)).mean()
+                actor_loss = -self.critic.q1_forward(obs, self.actor(x_actor)).mean()
                 actor_losses.append(actor_loss.item())
 
-                # Optimize the actor (and dynamics model jointly in rl_transfer mode)
+                # Actor update (+ dynamics model gets actor gradient in rl_transfer mode)
                 self.actor.optimizer.zero_grad()
                 if rl_transfer_active:
                     self.dynamics_model_optim.zero_grad()
                 actor_loss.backward()
                 self.actor.optimizer.step()
                 if rl_transfer_active:
+                    # Clip dynamics gradients from the actor path to prevent large updates
+                    th.nn.utils.clip_grad_norm_(
+                        self.dynamics_model.model.parameters(), max_norm=1.0
+                    )
+                    self.dynamics_model_optim.step()
+
+                    # Supervised anchor: keep forecasting ability while fine-tuning.
+                    # Separate backward so actor and supervised gradients don't interfere.
+                    pred_sup, true_sup = self._dynamics_model_predict(
+                        x_seq, y_seq, x_mark, y_mark, scale=False
+                    )
+                    sup_loss = self.dynamics_model_loss(pred_sup, true_sup)
+                    self.dynamics_model_optim.zero_grad()
+                    sup_loss.backward()
                     self.dynamics_model_optim.step()
 
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)

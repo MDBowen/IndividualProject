@@ -467,8 +467,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dynamics_rl_start_episode',
         type=int,
-        default=5,
-        help='Number of RL episodes before dynamics model training begins (default: 5)',
+        default=10,
+        help=(
+            'Number of completed RL episodes before dynamics model training begins (default: 10). '
+            'When episodes are longer than the total timestep budget the agent also activates '
+            'after max(2*learning_starts, 300) steps as a fallback.'
+        ),
     )
     args = parser.parse_args()
 
@@ -629,7 +633,8 @@ if __name__ == '__main__':
             "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
         'autoformer_td3_transfer': {
-            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts': 150,
+            # Higher learning_starts so Q-values are less noisy when dynamics fine-tuning begins.
+            "batch_size": 100, "buffer_size": 1000000, "learning_rate": 0.001, 'learning_starts': 300,
             "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep, "epochs": args.model_epochs},
             "dynamics_train_mode": 'rl_transfer',
             "dynamics_rl_lr": args.dynamics_rl_lr,
