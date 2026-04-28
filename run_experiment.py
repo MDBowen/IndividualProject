@@ -374,7 +374,7 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
     
 
 if __name__ == '__main__':
-    defaults_steps = 1000
+    defaults_steps = 100_000
     parser = argparse.ArgumentParser(description='Run RL trading experiments')
     parser.add_argument(
         '--n_trials',
@@ -421,13 +421,13 @@ if __name__ == '__main__':
     parser.add_argument(
         '--max_no_improvement_evals',
         type=int,
-        default=10,
+        default=20,
         help='Stop training after this many evals with no new best (default: 10)',
     )
     parser.add_argument(
         '--min_evals',
         type=int,
-        default=5,
+        default=10,
         help='Minimum evaluations before early stopping can trigger (default: 5)',
     )
     parser.add_argument(

@@ -272,7 +272,8 @@ class ModelBasedPPO(OnPolicyAlgorithm):
 
         # Fall back to step-based gate when episodes are too long to complete
         # within the training budget (e.g. 5 796-step episodes with 1 000 timesteps).
-        step_fallback = self.num_timesteps >= max(self.learning_starts * 2, 300)
+        # For on-policy PPO, use n_steps (rollout size) as the reference.
+        step_fallback = self.num_timesteps >= max(self.n_steps * 2, 300)
         episode_ready = (
             self._dynamics_episode_count >= self.dynamics_rl_start_episode
             or step_fallback
