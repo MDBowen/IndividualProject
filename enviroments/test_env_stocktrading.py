@@ -323,20 +323,20 @@ class StockTradingEnv(gym.Env):
             if self.turbulence_threshold is not None:
                 if self.turbulence >= self.turbulence_threshold:
                     actions = np.array([-self.hmax] * self.stock_dim)
-            begin_total_asset = self.state[0] + sum(
-                np.array(self.state[1 : (self.stock_dim + 1)])
-                * np.array(self.state[(self.stock_dim + 1) : (self.stock_dim * 2 + 1)])
-            )
-            # print("begin_total_asset:{}".format(begin_total_asset))
+            prices = np.array(self.state[1 : (self.stock_dim + 1)])
+            shares = np.array(self.state[(self.stock_dim + 1) : (self.stock_dim * 2 + 1)])
+            begin_total_asset = self.state[0] + (prices * shares).sum()
 
             buy_index = []
             sell_index = []
 
             argsort_actions = np.argsort(actions)
-            if (actions < 0).any():
-                sell_index = argsort_actions[: np.where(actions < 0)[0].shape[0]]
-            if (actions > 0).any():
-                buy_index = argsort_actions[::-1][: np.where(actions > 0)[0].shape[0]]
+            n_sell = int((actions < 0).sum())
+            n_buy  = int((actions > 0).sum())
+            if n_sell:
+                sell_index = argsort_actions[:n_sell]
+            if n_buy:
+                buy_index = argsort_actions[::-1][:n_buy]
 
             for index in sell_index:
                 # print(f"Num shares before: {self.state[index+self.stock_dim+1]}")
@@ -361,10 +361,10 @@ class StockTradingEnv(gym.Env):
                     self.turbulence = self.data[self.risk_indicator_col].values[0]
             self.state = self._update_state()
 
-            end_total_asset = self.state[0] + sum(
+            end_total_asset = self.state[0] + (
                 np.array(self.state[1 : (self.stock_dim + 1)])
                 * np.array(self.state[(self.stock_dim + 1) : (self.stock_dim * 2 + 1)])
-            )
+            ).sum()
             self.asset_memory.append(end_total_asset)
             self.date_memory.append(self._get_date())
             self.reward = end_total_asset - begin_total_asset

@@ -33,13 +33,11 @@ class AutoCorrelation(nn.Module):
         weights = torch.stack([mean_value[:, index[i]] for i in range(top_k)], dim=-1)
         # update corr
         tmp_corr = torch.softmax(weights, dim=-1)
-        # aggregation
-        tmp_values = values
-        delays_agg = torch.zeros_like(values).float()
-        for i in range(top_k):
-            pattern = torch.roll(tmp_values, -int(index[i]), -1)
-            delays_agg = delays_agg + pattern * \
-                         (tmp_corr[:, i].unsqueeze(1).unsqueeze(1).unsqueeze(1).repeat(1, head, channel, length))
+        # aggregation — stack all rolled patterns then weight-sum in one op
+        patterns = torch.stack([torch.roll(values, -int(index[i]), -1) for i in range(top_k)])
+        # patterns: (top_k, B, H, C, L), weights: (top_k, B, 1, 1, 1)
+        w = tmp_corr.permute(1, 0).reshape(top_k, -1, 1, 1, 1)
+        delays_agg = (patterns * w).sum(0)
         return delays_agg
 
     def time_delay_agg_inference(self, values, corr):
@@ -60,14 +58,14 @@ class AutoCorrelation(nn.Module):
         weights, delay = torch.topk(mean_value, top_k, dim=-1)
         # update corr
         tmp_corr = torch.softmax(weights, dim=-1)
-        # aggregation
+        # aggregation — gather all top_k delays at once
         tmp_values = values.repeat(1, 1, 1, 2)
-        delays_agg = torch.zeros_like(values).float()
-        for i in range(top_k):
-            tmp_delay = init_index + delay[:, i].unsqueeze(1).unsqueeze(1).unsqueeze(1).repeat(1, head, channel, length)
-            pattern = torch.gather(tmp_values, dim=-1, index=tmp_delay)
-            delays_agg = delays_agg + pattern * \
-                         (tmp_corr[:, i].unsqueeze(1).unsqueeze(1).unsqueeze(1).repeat(1, head, channel, length))
+        # delays_stacked: (B, H, C, top_k, L)
+        delays_stacked = (init_index.unsqueeze(-2)
+                          + delay.view(batch, 1, 1, top_k, 1).expand(-1, head, channel, -1, length))
+        patterns = torch.gather(tmp_values.unsqueeze(-2).expand(-1, -1, -1, top_k, -1),
+                                dim=-1, index=delays_stacked)
+        delays_agg = (patterns * tmp_corr.view(batch, 1, 1, top_k, 1)).sum(-2)
         return delays_agg
 
     def time_delay_agg_full(self, values, corr):
@@ -86,13 +84,13 @@ class AutoCorrelation(nn.Module):
         weights, delay = torch.topk(corr, top_k, dim=-1)
         # update corr
         tmp_corr = torch.softmax(weights, dim=-1)
-        # aggregation
+        # aggregation — gather all top_k delays at once
         tmp_values = values.repeat(1, 1, 1, 2)
-        delays_agg = torch.zeros_like(values).float()
-        for i in range(top_k):
-            tmp_delay = init_index + delay[..., i].unsqueeze(-1)
-            pattern = torch.gather(tmp_values, dim=-1, index=tmp_delay)
-            delays_agg = delays_agg + pattern * (tmp_corr[..., i].unsqueeze(-1))
+        # delays_stacked: (B, H, C, top_k, L)
+        delays_stacked = init_index.unsqueeze(-2) + delay.unsqueeze(-1)
+        patterns = torch.gather(tmp_values.unsqueeze(-2).expand(-1, -1, -1, top_k, -1),
+                                dim=-1, index=delays_stacked)
+        delays_agg = (patterns * tmp_corr.unsqueeze(-1)).sum(-2)
         return delays_agg
 
     def forward(self, queries, keys, values, attn_mask):

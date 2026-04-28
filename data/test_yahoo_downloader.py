@@ -66,7 +66,7 @@ class TestYahooDownloader:
                 self.data_df["date"] = self.data_df["date"].dt.strftime("%Y-%m-%d")
                 return self.data_df
         # Download and save the data in a pandas DataFrame:
-        data_df = pd.DataFrame()
+        dfs = []
         num_failures = 0
         failures = []
         for tic in self.ticker_list:
@@ -84,10 +84,10 @@ class TestYahooDownloader:
                 temp_df.columns = temp_df.columns.droplevel(1)
             temp_df["tic"] = tic
             if len(temp_df) > 0:
-                # data_df = data_df.append(temp_df)
-                data_df = pd.concat([data_df, temp_df], axis=0)
+                dfs.append(temp_df)
             else:
                 num_failures += 1
+        data_df = pd.concat(dfs, axis=0) if dfs else pd.DataFrame()
         if num_failures == len(self.ticker_list):
             raise ValueError("no data is fetched.")
         # reset the index, we want to use numbers as index instead of dates
@@ -115,7 +115,7 @@ class TestYahooDownloader:
         # create day of the week column (monday = 0)
         data_df["day"] = data_df["date"].dt.dayofweek
         # convert date to standard string format, easy to filter
-        data_df["date"] = data_df.date.apply(lambda x: x.strftime("%Y-%m-%d"))
+        data_df["date"] = data_df["date"].dt.strftime("%Y-%m-%d")
         # drop missing data
         data_df = data_df.dropna()
         data_df = data_df.reset_index(drop=True)
