@@ -1151,6 +1151,94 @@ def _plot_action_heatmap(
 
 
 # --------------------------------------------------------------------------- #
+# Agent trials: per-agent portfolio value, one line per trial                   #
+# --------------------------------------------------------------------------- #
+
+def _plot_agent_trials(
+    results: dict,
+    trials: list,
+    agents: list,
+    tickers: dict,
+    out_dir: str,
+):
+    """One figure per agent showing portfolio value over timesteps with each trial as a separate line.
+
+    If multiple datasets are present, one subplot column per dataset.
+    All episodes within a trial are concatenated end-to-end.
+    Portfolio values are normalised so every trial starts at 100.
+    """
+    _apply_paper_style()
+    os.makedirs(out_dir, exist_ok=True)
+
+    datasets = list(results[trials[0]].keys())
+    n_ds = len(datasets)
+
+    for agent in agents:
+        fig, axes = plt.subplots(
+            1, n_ds,
+            figsize=(7 * n_ds, 5),
+            squeeze=False,
+        )
+        fig.subplots_adjust(wspace=0.32, top=0.88, bottom=0.12)
+
+        has_data = False
+
+        for col, dataset_name in enumerate(datasets):
+            ax = axes[0][col]
+            features = len(tickers.get(dataset_name, []))
+
+            for t_idx, trial in enumerate(trials):
+                color = PALETTE[t_idx % len(PALETTE)]
+                try:
+                    entry = results[trial][dataset_name].get(agent, {})
+                    stock_dim = entry.get('stock_dim')
+                    ep_states_list = entry.get('states', [])
+                    if not ep_states_list:
+                        continue
+
+                    pv_segments = [
+                        _portfolio_values_from_states(np.array(ep), features, stock_dim)
+                        for ep in ep_states_list
+                    ]
+                    pv = np.concatenate(pv_segments)
+                    if pv[0] != 0:
+                        pv = pv / pv[0] * 100
+
+                    ax.plot(
+                        np.arange(len(pv)), pv,
+                        color=color, linewidth=1.4,
+                        label=f'Trial {trial}', alpha=0.85,
+                    )
+                    has_data = True
+                except (KeyError, IndexError):
+                    continue
+
+            ax.axhline(100, color='black', linestyle=':', linewidth=0.9, alpha=0.5)
+            ax.set_xlabel('Trading Day')
+            ax.set_ylabel('Portfolio Value (indexed, start = 100)')
+            ax.set_title(dataset_name, fontweight='bold')
+            ax.legend(loc='upper left', frameon=True, fontsize=8)
+
+        if not has_data:
+            plt.close(fig)
+            continue
+
+        agent_label = agent.replace('_', ' ').title()
+        fig.suptitle(
+            f'Per-Trial Portfolio Performance — {agent_label}',
+            fontsize=13, fontweight='bold',
+        )
+
+        agent_safe = agent.replace('/', '_')
+        for ext in ('png', 'pdf'):
+            fig.savefig(
+                os.path.join(out_dir, f'{agent_safe}.{ext}'),
+                dpi=SAVE_DPI, bbox_inches='tight',
+            )
+        plt.close(fig)
+
+
+# --------------------------------------------------------------------------- #
 # Main report function                                                          #
 # --------------------------------------------------------------------------- #
 
@@ -1328,6 +1416,13 @@ def create_performance_report(
         )
 
         print(f'[create_performance_report] Saved outputs for "{dataset_name}" → {output_dir}')
+
+    # ---------------------------------------------------------------------- #
+    # 12. Per-agent trial comparison (agent_trials subfolder)                 #
+    # ---------------------------------------------------------------------- #
+    agent_trials_dir = os.path.join(output_dir, 'agent_trials')
+    _plot_agent_trials(results, trials, agents, tickers, agent_trials_dir)
+    print(f'[create_performance_report] Saved agent trial plots → {agent_trials_dir}')
 
 
 # --------------------------------------------------------------------------- #
