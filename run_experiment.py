@@ -37,6 +37,10 @@ model_based_agents = [
     'autoformer_td3_predictive', 'autoformer_ppo_predictive',
     'autoformer_td3_transfer', 'autoformer_ppo_transfer',
 ]
+segmented_agents = [
+    'autoformer_td3_segmented', 'autoformer_ppo_segmented',
+    'dense_td3_segmented',      'dense_ppo_segmented',
+]
 model_free_agents = ['ddpg','ppo','td3']
 
 def get_data(train_start, train_end, val_end, test_end, tickers, indicators = None, data_path = 'data/datasets'):
@@ -244,6 +248,117 @@ def train_model_based_agent(agent_name, agent_class, timesteps, train, val, env_
 
     return model
 
+def train_segmented_model_based_agent(
+    agent_name, agent_class, total_timesteps, train, val,
+    env_kwargs, agent_kwargs, n_segments=4, callback_kwargs=None,
+):
+    '''
+    Train an MBRL agent on the full training set by cycling through temporal
+    segments.  Each segment n uses a dynamics model trained only on segments
+    0..n-1, giving the policy "skepticism" about the current window.
+    Returns the RL policy with a dynamics model retrained on the full dataset.
+    '''
+    # 1. Divide training dates into n_segments equal parts
+    unique_dates = sorted(train['date'].unique())
+    T = len(unique_dates)
+    seg_size = max(1, T // n_segments)
+    segments = [
+        unique_dates[i * seg_size : (i + 1) * seg_size if i < n_segments - 1 else T]
+        for i in range(n_segments)
+    ]
+    timesteps_per_seg = max(1, total_timesteps // n_segments)
+
+    tickers = train.tic.unique()
+    stock_dimension = len(tickers)
+    state_space = 1 + 2 * stock_dimension + len(indicators) * stock_dimension
+    _env_kwargs = {
+        **env_kwargs,
+        "state_space": state_space,
+        "stock_dim": stock_dimension,
+        "buy_cost_pct": [0.001] * stock_dimension,
+        "sell_cost_pct": [0.001] * stock_dimension,
+        "num_stock_shares": [0] * stock_dimension,
+        "tech_indicator_list": indicators,
+        "action_space": stock_dimension,
+    }
+    agent_kwargs = dict(agent_kwargs)
+    agent_kwargs['_dynamics_kwargs']['feature_dim'] = len(tickers)
+
+    # Fixed val env reused for all segment callbacks
+    val_env, _ = StockTradingEnv(df=val, **_env_kwargs).get_sb_env()
+
+    agent = None
+    for n, seg_dates in enumerate(segments):
+        # 2. Train a fresh predictor on segments 0..n-1
+        dynamics_model = get_dynamics_model(agent_kwargs['_dynamics_kwargs'])
+        if n > 0:
+            prior_dates = [d for segs in segments[:n] for d in segs]
+            prior_data = train[train['date'].isin(prior_dates)]
+            train_dynamics_model(dynamics_model, prior_data)
+
+        # 3. Build env for this segment
+        seg_env, _ = StockTradingEnv(
+            df=train[train['date'].isin(seg_dates)], **_env_kwargs
+        ).get_sb_env()
+
+        # 4. Create agent (first segment) or hot-swap env + predictor
+        rl_kwargs = {k: v for k, v in agent_kwargs.items() if k != '_dynamics_kwargs'}
+        if agent is None:
+            agent = agent_class(
+                env=seg_env,
+                dynamics_model=dynamics_model,
+                tensorboard_log=None,
+                verbose=1,
+                policy_kwargs=None,
+                seed=None,
+                **rl_kwargs,
+            )
+        else:
+            agent.set_env(seg_env)
+            agent.dynamics_model = dynamics_model
+            if hasattr(agent, '_scaler_device'):
+                del agent._scaler_device   # invalidate lazy scaler cache
+
+        # 5. Per-segment callback
+        cb = callback_kwargs or {}
+        n_steps = agent_kwargs.get('n_steps', 1)
+        eval_freq = max(cb.get('eval_freq', 50), n_steps)
+        stop_cb = StopTrainingOnNoModelImprovement(
+            max_no_improvement_evals=cb.get('max_no_improvement_evals', 10),
+            min_evals=cb.get('min_evals', 5),
+            verbose=0,
+        )
+        callback = CustomCallback(
+            val_env,
+            callback_after_eval=stop_cb,
+            best_model_save_path=f'./logs/{agent_name}/seg{n}/',
+            log_path=f'./logs/{agent_name}/seg{n}/',
+            n_eval_episodes=cb.get('n_eval_episodes', 3),
+            eval_freq=eval_freq,
+            deterministic=True,
+            render=False,
+            verbose=0,
+        )
+
+        print(f'[{agent_name}] Segment {n}/{n_segments - 1}: '
+              f'{len(seg_dates)} days, {timesteps_per_seg} RL steps')
+        agent.learn(total_timesteps=timesteps_per_seg, log_interval=100, callback=callback)
+
+        best_path = f'./logs/{agent_name}/seg{n}/best_model.zip'
+        if os.path.exists(best_path):
+            agent.set_parameters(best_path)
+            print(f'[{agent_name}] Segment {n}: restored best model from {best_path}')
+
+    # 6. Final predictor: retrain from scratch on the full training set
+    final_model = get_dynamics_model(agent_kwargs['_dynamics_kwargs'])
+    train_dynamics_model(final_model, train)
+    agent.dynamics_model = final_model
+    if hasattr(agent, '_scaler_device'):
+        del agent._scaler_device
+
+    return agent
+
+
 def train_predictor_agent(agent_name, agent_class, timesteps, train, val, env_kwargs, agent_kwargs):
     # Implementation for training a predictor agent
     
@@ -301,7 +416,7 @@ def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=N
         'tickers': list(tickers) if tickers is not None else None,
     }
 
-def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs=None, agents_kwargs=None, indicators=[], eval_episodes=3, callback_kwargs=None):
+def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs=None, agents_kwargs=None, indicators=[], eval_episodes=3, callback_kwargs=None, n_segments=4):
 
     results = {}
 
@@ -348,13 +463,26 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                                                     agent_kwargs,
                                                     callback_kwargs=callback_kwargs)
 
+                elif agent_name in segmented_agents:
+                    agent = train_segmented_model_based_agent(
+                        agent_name,
+                        agent_class,
+                        timesteps,
+                        train,
+                        val,
+                        env_kwargs,
+                        agent_kwargs,
+                        n_segments=n_segments,
+                        callback_kwargs=callback_kwargs,
+                    )
+
                 elif agent_name in predictor_agents:
-                    agent = train_predictor_agent(agent_name, 
-                                                  agent_class, 
-                                                  timesteps, 
-                                                  train, 
-                                                  val, 
-                                                  env_kwargs, 
+                    agent = train_predictor_agent(agent_name,
+                                                  agent_class,
+                                                  timesteps,
+                                                  train,
+                                                  val,
+                                                  env_kwargs,
                                                   agent_kwargs)
                 elif agent_name in basic_agents:
                     agent = get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs)
@@ -367,7 +495,7 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                     uses_predictor=agent_name not in model_free_agents + basic_agents,
                     env_kwargs=env_kwargs,
                     tickers=tic,
-                    eval_episodes=eval_episodes
+                    eval_episodes=eval_episodes,
                 )
                 
     create_performance_report(results, dataset)
@@ -474,6 +602,16 @@ if __name__ == '__main__':
             'after max(2*learning_starts, 300) steps as a fallback.'
         ),
     )
+    parser.add_argument(
+        '--n_segments',
+        type=int,
+        default=0,
+        help=(
+            'Number of temporal segments for segmented-predictor training (default: 0, change to use a segmented agent). '
+            'Total timesteps are divided equally across segments; each segment uses a '
+            'dynamics model trained only on prior segments.'
+        ),
+    )
     args = parser.parse_args()
 
     n_trials      = args.n_trials
@@ -522,6 +660,10 @@ if __name__ == '__main__':
         # 'autoformer_ppo_transfer': ModelBasedPPO,
     }
 
+    if args.n_segments > 0:
+        agents['autoformer_td3_segmented'] = ModelBasedTD3
+        agents['autoformer_ppo_segmented'] = ModelBasedPPO
+
     # agents = {
     #           'buy_and_hold': BuyAndHold, 
     #           'dense_td3': ModelBasedTD3,
@@ -540,7 +682,7 @@ if __name__ == '__main__':
 
     stock_dimension = assets_per_ep
     state_space = 1 + 2*stock_dimension + len(indicators)*stock_dimension
-    buy_cost_list = sell_cost_list = [0.001] * stock_dimension
+    buy_cost_list = sell_cost_list = [0.1] * stock_dimension
     num_stock_shares = [0] * stock_dimension
 
     env_kwargs = {
@@ -648,6 +790,40 @@ if __name__ == '__main__':
             "dynamics_rl_lr": args.dynamics_rl_lr,
             "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
         },
+        'autoformer_td3_segmented': {
+            "batch_size": 100, "buffer_size": 1000000,
+            "learning_rate": 0.001, 'learning_starts': 150,
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep,
+                                 "epochs": args.model_epochs},
+            "dynamics_train_mode": 'frozen',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'autoformer_ppo_segmented': {
+            "n_steps": min(2048, timesteps), "ent_coef": 0.01,
+            "learning_rate": 0.00025, "batch_size": min(128, timesteps),
+            "_dynamics_kwargs": {'model_name': 'Autoformer', "feature_dim": assets_per_ep,
+                                 "epochs": args.model_epochs},
+            "dynamics_train_mode": 'frozen',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'dense_td3_segmented': {
+            "batch_size": 100, "buffer_size": 1000000,
+            "learning_rate": 0.001, 'learning_starts': 150,
+            "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
+            "dynamics_train_mode": 'frozen',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
+        'dense_ppo_segmented': {
+            "n_steps": min(2048, timesteps), "ent_coef": 0.01,
+            "learning_rate": 0.00025, "batch_size": min(128, timesteps),
+            "_dynamics_kwargs": {"model_name": 'Dense', "feature_dim": assets_per_ep},
+            "dynamics_train_mode": 'frozen',
+            "dynamics_rl_lr": args.dynamics_rl_lr,
+            "dynamics_rl_start_episode": args.dynamics_rl_start_episode,
+        },
     }
 
     if args.compare_mbrl:
@@ -675,6 +851,7 @@ if __name__ == '__main__':
         agents_kwargs=agents_kwargs,
         indicators=indicators,
         callback_kwargs=callback_kwargs,
+        n_segments=args.n_segments,
     )
 
     print('All done!')
