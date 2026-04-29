@@ -661,8 +661,23 @@ if __name__ == '__main__':
     }
 
     if args.n_segments > 0:
-        agents['autoformer_td3_segmented'] = ModelBasedTD3
-        agents['autoformer_ppo_segmented'] = ModelBasedPPO
+        agents = {
+        'buy_and_hold': BuyAndHold,
+        'td3': None, 'ppo': None,
+        # 'dense_predictor': PredictionSignStrategy,
+        # 'autoformer_predictor': PredictionSignStrategy,
+        'autoformer_td3': ModelBasedTD3,
+        'autoformer_ppo': ModelBasedPPO,
+        'autoformer_td3_segmented':ModelBasedTD3,
+        'autoformer_ppo_segmented':ModelBasedPPO,
+        # 'autoformer_td3_frozen': ModelBasedTD3,
+        # 'autoformer_ppo_frozen': ModelBasedPPO,
+        # 'autoformer_td3_predictive': ModelBasedTD3,
+        # 'autoformer_ppo_predictive': ModelBasedPPO,
+        # 'autoformer_td3_transfer': ModelBasedTD3,
+        # 'autoformer_ppo_transfer': ModelBasedPPO,
+        }
+
 
     # agents = {
     #           'buy_and_hold': BuyAndHold, 
