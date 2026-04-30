@@ -295,6 +295,12 @@ def train_segmented_model_based_agent(
             prior_dates = [d for segs in segments[:n] for d in segs]
             prior_data = train[train['date'].isin(prior_dates)]
             train_dynamics_model(dynamics_model, prior_data)
+        else:
+            # No prior data for segment 0: set identity scaler so predictions are
+            # unscaled (the model weights are random, predictions will be noisy).
+            feature_dim = agent_kwargs['_dynamics_kwargs']['feature_dim']
+            dynamics_model.mean_t  = torch.zeros(feature_dim, dtype=torch.float32)
+            dynamics_model.scale_t = torch.ones(feature_dim, dtype=torch.float32)
 
         # 3. Build env for this segment
         seg_env, _ = StockTradingEnv(
