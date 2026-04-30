@@ -304,7 +304,7 @@ def train_segmented_model_based_agent(
 
         # 3. Build env for this segment
         seg_env, _ = StockTradingEnv(
-            df=train[train['date'].isin(seg_dates)], **_env_kwargs
+            df=train[train['date'].isin(seg_dates)].reset_index(drop=True), **_env_kwargs
         ).get_sb_env()
 
         # 4. Create agent (first segment) or hot-swap env + predictor
