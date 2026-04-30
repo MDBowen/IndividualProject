@@ -6,4 +6,4 @@ python run_experiment.py \
     --max_no_improvement_evals 40
     --n_trials 3 \
     --only_sp100 True \
-    --dynamics_rl_start_episode 1
+    --dynamics_rl_start_episode 7
