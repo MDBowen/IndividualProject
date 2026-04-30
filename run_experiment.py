@@ -422,45 +422,32 @@ def test_agent(agent, test_set, uses_predictor=False, env_kwargs=None, tickers=N
         'tickers': list(tickers) if tickers is not None else None,
     }
 
-def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs=None, agents_kwargs=None, indicators=[], eval_episodes=3, callback_kwargs=None, n_segments=4):
+def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep, env_kwargs=None, agents_kwargs=None, indicators=[], eval_episodes=3, callback_kwargs=None, n_segments=4, number_of_runs=1):
 
     results = {}
 
     for data_name in dataset.keys():
         train_set, val_set, test_set, tickers = get_data('2000-01-01', '2023-01-01', '2024-01-01', '2026-01-01', dataset[data_name], indicators)
 
-        #gets the whole dataframe of a 'market' (e.g. sp100) and the unique tickers in that dataframe
-
-        'gets a subset of n assets from a market'
-        # print('Number of training time steps:', timesteps_per_env*env_episodes)
-
-        for trials in range(1, number_of_trials+1):
+        for trials in range(1, number_of_trials + 1):
 
             results.setdefault(trials, {})
             results[trials][data_name] = {}
 
             train, val, test, tic = sample_tickers(train_set, val_set, test_set, tickers, assets_per_ep)
-            
-            for agent_name, agent_class in agents.items():
 
-                results[trials][data_name][agent_name] = {}
+            for run in range(1, number_of_runs + 1):
 
-                print(f'\n Running agent {agent_name} on dataset {data_name} with {tic} train,test, val have {train["date"].nunique()}, {val["date"].nunique()}, {test["date"].nunique()} trading days \n')
+                results[trials][data_name][run] = {}
 
-                agent_kwargs = agents_kwargs[agent_name]
+                for agent_name, agent_class in agents.items():
 
-                if agent_name in model_free_agents:
-                    agent = train_model_free_agent(agent_name,
-                                                   agent_class,
-                                                   timesteps,
-                                                   train,
-                                                   val,
-                                                   env_kwargs,
-                                                   agent_kwargs,
-                                                   callback_kwargs=callback_kwargs)
+                    print(f'\n Running agent {agent_name} on dataset {data_name} with {tic} — trial {trials}/{number_of_trials}, run {run}/{number_of_runs}. train/val/test: {train["date"].nunique()}/{val["date"].nunique()}/{test["date"].nunique()} trading days \n')
 
-                elif agent_name in model_based_agents:
-                    agent = train_model_based_agent(agent_name,
+                    agent_kwargs = agents_kwargs[agent_name]
+
+                    if agent_name in model_free_agents:
+                        agent = train_model_free_agent(agent_name,
                                                     agent_class,
                                                     timesteps,
                                                     train,
@@ -469,42 +456,66 @@ def run_experiments(number_of_trials, agents, dataset, timesteps, assets_per_ep,
                                                     agent_kwargs,
                                                     callback_kwargs=callback_kwargs)
 
-                elif agent_name in segmented_agents:
-                    agent = train_segmented_model_based_agent(
-                        agent_name,
-                        agent_class,
-                        timesteps,
-                        train,
-                        val,
-                        env_kwargs,
-                        agent_kwargs,
-                        n_segments=n_segments,
-                        callback_kwargs=callback_kwargs,
+                    elif agent_name in model_based_agents:
+                        agent = train_model_based_agent(agent_name,
+                                                        agent_class,
+                                                        timesteps,
+                                                        train,
+                                                        val,
+                                                        env_kwargs,
+                                                        agent_kwargs,
+                                                        callback_kwargs=callback_kwargs)
+
+                    elif agent_name in segmented_agents:
+                        agent = train_segmented_model_based_agent(
+                            agent_name,
+                            agent_class,
+                            timesteps,
+                            train,
+                            val,
+                            env_kwargs,
+                            agent_kwargs,
+                            n_segments=n_segments,
+                            callback_kwargs=callback_kwargs,
+                        )
+
+                    elif agent_name in predictor_agents:
+                        agent = train_predictor_agent(agent_name,
+                                                    agent_class,
+                                                    timesteps,
+                                                    train,
+                                                    val,
+                                                    env_kwargs,
+                                                    agent_kwargs)
+                    elif agent_name in basic_agents:
+                        agent = get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs)
+                    else:
+                        raise ValueError(f"Can't find agent {agent_name}")
+
+                    results[trials][data_name][run][agent_name] = test_agent(
+                        agent,
+                        test,
+                        uses_predictor=agent_name not in model_free_agents + basic_agents,
+                        env_kwargs=env_kwargs,
+                        tickers=tic,
+                        eval_episodes=eval_episodes,
                     )
 
-                elif agent_name in predictor_agents:
-                    agent = train_predictor_agent(agent_name,
-                                                  agent_class,
-                                                  timesteps,
-                                                  train,
-                                                  val,
-                                                  env_kwargs,
-                                                  agent_kwargs)
-                elif agent_name in basic_agents:
-                    agent = get_basic_agent(agent_name, agent_class, env_kwargs, agent_kwargs)
-                else:
-                    raise ValueError(f"Can't find agent {agent_name}")
-                    
-                results[trials][data_name][agent_name] = test_agent(
-                    agent,
-                    test,
-                    uses_predictor=agent_name not in model_free_agents + basic_agents,
-                    env_kwargs=env_kwargs,
-                    tickers=tic,
-                    eval_episodes=eval_episodes,
-                )
-                
-    create_performance_report(results, dataset)
+    # Flatten (trial, run) pairs into sequential keys so the plotting functions
+    # treat each run as an independent sample, giving mean ± std bands over all
+    # trials × runs.
+    flat_results = {}
+    flat_key = 1
+    for trial in sorted(results.keys()):
+        first_data = next(iter(results[trial]))
+        for run in sorted(results[trial][first_data].keys()):
+            flat_results[flat_key] = {
+                data_name: results[trial][data_name][run]
+                for data_name in results[trial]
+            }
+            flat_key += 1
+
+    create_performance_report(flat_results, dataset)
     
 
 if __name__ == '__main__':
@@ -609,6 +620,12 @@ if __name__ == '__main__':
         ),
     )
     parser.add_argument(
+        '--number_of_runs',
+        type=int,
+        default=1,
+        help='Number of training runs per trial with the same ticker subset (default: 1)',
+    )
+    parser.add_argument(
         '--n_segments',
         type=int,
         default=0,
@@ -620,9 +637,10 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    n_trials      = args.n_trials
-    timesteps     = args.timesteps
-    assets_per_ep = args.assets_per_ep
+    n_trials        = args.n_trials
+    timesteps       = args.timesteps
+    assets_per_ep   = args.assets_per_ep
+    number_of_runs  = args.number_of_runs
 
     callback_kwargs = {
         'verbose':                  args.verbose,
@@ -633,8 +651,9 @@ if __name__ == '__main__':
     }
 
     print(
-        f'Config — n_trials={n_trials}  timesteps={timesteps}  assets_per_ep={assets_per_ep}  '
-        f'eval_freq={timesteps // args.eval_num}  n_eval_episodes={args.n_eval_episodes}  '
+        f'Config — n_trials={n_trials}  number_of_runs={number_of_runs}  timesteps={timesteps}  '
+        f'assets_per_ep={assets_per_ep}  eval_freq={timesteps // args.eval_num}  '
+        f'n_eval_episodes={args.n_eval_episodes}  '
         f'max_no_improvement_evals={args.max_no_improvement_evals}  min_evals={args.min_evals}'
     )
 
@@ -873,6 +892,7 @@ if __name__ == '__main__':
         indicators=indicators,
         callback_kwargs=callback_kwargs,
         n_segments=args.n_segments,
+        number_of_runs=number_of_runs,
     )
 
     print('All done!')
